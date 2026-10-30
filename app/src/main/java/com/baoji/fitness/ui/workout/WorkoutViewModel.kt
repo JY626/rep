@@ -1,5 +1,6 @@
 package com.baoji.fitness.ui.workout
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.baoji.fitness.core.database.entity.ExerciseEntity
@@ -10,6 +11,7 @@ import com.baoji.fitness.data.repository.WorkoutRepository
 import com.baoji.fitness.data.repository.buildActiveSessionDetail
 import com.baoji.fitness.data.settings.ReminderSettings
 import com.baoji.fitness.domain.algorithm.OverloadCalculator
+import com.baoji.fitness.domain.algorithm.RestTimerMath
 import com.baoji.fitness.domain.algorithm.SessionDayGate
 import com.baoji.fitness.domain.algorithm.StreakCalculator
 import com.baoji.fitness.domain.model.PresetTemplates
@@ -153,7 +155,20 @@ class WorkoutViewModel(
     private val _isRestTimerVisible = MutableStateFlow(false)
     val isRestTimerVisible: StateFlow<Boolean> = _isRestTimerVisible.asStateFlow()
 
+    /** 本轮休息目标秒数（含 +30s 累加），供胶囊显示进度环与「目标 Ns」。 */
+    private val _restTotalSeconds = MutableStateFlow(90)
+    val restTotalSeconds: StateFlow<Int> = _restTotalSeconds.asStateFlow()
+
     private var timerJob: Job? = null
+
+    /**
+     * 休息结束的绝对时刻，基于 [SystemClock.elapsedRealtime]（单调递增，含深度睡眠）。
+     *
+     * 倒计时只由「截止时刻 − 当前时刻」推导，绝不自减累加：
+     * 应用切后台被系统冻结时协程不会执行，但进程活着的话，
+     * 回到前台重新算差值依然正确 —— 不会出现「后台休息暂停」。
+     */
+    private var restEndAtElapsedMs: Long = 0L
 
     /**
      * 本次训练已用时（秒）。会话开始时起算，每秒推进。
@@ -367,6 +382,7 @@ class WorkoutViewModel(
         viewModelScope.launch {
             repository.finishSession(session, totalVolume, notes.trim())
             _isRestTimerVisible.value = false
+            restEndAtElapsedMs = 0L
             timerJob?.cancel()
             // 归档后停掉计时，归零（下次开练重新计）
             sessionTickerJob?.cancel()
@@ -376,23 +392,55 @@ class WorkoutViewModel(
 
     private fun startRestTimer(seconds: Int) {
         timerJob?.cancel()
+        restEndAtElapsedMs = SystemClock.elapsedRealtime() + seconds * 1000L
+        _restTotalSeconds.value = seconds
         _restSecondsLeft.value = seconds
         _isRestTimerVisible.value = true
+        launchRestTicker()
+    }
 
+    /**
+     * 只负责「把差值刷到 UI 上」，不负责累加。
+     * 250ms 轮询而非精准 1s：系统调度可能推迟唤醒，靠重新求差值自愈，
+     * 每次 tick 都能立刻纠正到真实剩余时间。
+     */
+    private fun launchRestTicker() {
+        timerJob?.cancel()
         timerJob = viewModelScope.launch {
-            while (_restSecondsLeft.value > 0) {
-                delay(1000)
-                _restSecondsLeft.value -= 1
+            while (true) {
+                val left = remainingRestSeconds()
+                _restSecondsLeft.value = left
+                if (left <= 0) break
+                delay(250L)
             }
+            restEndAtElapsedMs = 0L
             _isRestTimerVisible.value = false
         }
     }
 
+    /** 剩余秒数（向上取整，保证第 1 秒显示完整的目标值）。 */
+    private fun remainingRestSeconds(): Int =
+        RestTimerMath.remainingSeconds(SystemClock.elapsedRealtime(), restEndAtElapsedMs)
+
     fun add30sRest() {
-        _restSecondsLeft.value += 30
+        val now = SystemClock.elapsedRealtime()
+        // 上一轮是否还在走：决定加时是「顺延」还是「从零起算一轮 30s」
+        val running = restEndAtElapsedMs > now
+        // 已归零时从「现在」重新起算，而不是从过期的截止时刻加，否则 +30s 会被瞬间吃掉
+        restEndAtElapsedMs = RestTimerMath.extendEnd(
+            nowElapsedMs = now,
+            endAtElapsedMs = restEndAtElapsedMs,
+            extraSeconds = 30
+        )
+        _restTotalSeconds.value = if (running) _restTotalSeconds.value + 30 else 30
+        _restSecondsLeft.value = remainingRestSeconds()
+        _isRestTimerVisible.value = true
+        // ticker 可能已退出（上一轮已数完），需要重新拉起
+        if (timerJob?.isActive != true) launchRestTicker()
     }
 
     fun skipRestTimer() {
+        restEndAtElapsedMs = 0L
         _restSecondsLeft.value = 0
         _isRestTimerVisible.value = false
         timerJob?.cancel()

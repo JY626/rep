@@ -101,6 +101,7 @@ fun WorkoutScreen(
     val exerciseGroups by viewModel.exerciseGroups.collectAsState()
     val allExercises by viewModel.allExercises.collectAsState()
     val restSeconds by viewModel.restSecondsLeft.collectAsState()
+    val restTotalSeconds by viewModel.restTotalSeconds.collectAsState()
     val isTimerVisible by viewModel.isRestTimerVisible.collectAsState()
     val todaySummary by viewModel.todaySummary.collectAsState()
     val habit by viewModel.habit.collectAsState()
@@ -618,6 +619,7 @@ fun WorkoutScreen(
         RestTimerCapsule(
             visible = isTimerVisible,
             secondsLeft = restSeconds,
+            totalSeconds = restTotalSeconds,
             onAdd30s = {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 viewModel.add30sRest()
