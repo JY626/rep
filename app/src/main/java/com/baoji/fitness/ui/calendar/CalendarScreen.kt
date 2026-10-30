@@ -1169,7 +1169,9 @@ private fun DayCell(
             append(if (hasMetric) "有体测记录" else "无体测记录")
         }
     }
-    // 34dp 上的 14dp 圆角是 squircle，不是正圆；41dp 外环用同心圆角（14 + 3.5）
+    // 34dp 上的 14dp 圆角是 squircle，不是正圆。
+    // 环圆角 = 内层 14 + (41 − 34) / 2 = 17.5，取 17 差 0.5dp 不可见。
+    // 若改环尺寸，按此式重算，不要沿用 17（否则环与绿底不平行，看起来内方外圆）。
     val shape = RoundedCornerShape(14.dp)
     val ringShape = RoundedCornerShape(17.dp)
     Box(
@@ -1182,7 +1184,9 @@ private fun DayCell(
             },
         contentAlignment = Alignment.Center
     ) {
-        // 41dp 包络恒定渲染：今天画环，非今天只是一层空壳，保证 34dp 绿盘在两种状态下都居中且等大
+        // 41dp 包络恒定渲染：今天画环，非今天只是一层空壳，保证 34dp 绿盘在两种状态下都居中且等大。
+        // ⚠️ 41dp 是几何天花板：47×48 的格子里横向只剩 3dp、纵向 3.5dp 净空，
+        // 环再大就贴到邻格（列间距是 0，会直接糊在一起）。别为了「环更粗更明显」往上加。
         Box(
             modifier = Modifier
                 .size(41.dp)
@@ -1212,13 +1216,15 @@ private fun DayCell(
                 )
             }
         }
-        // 有体测：4dp 蓝点放格子右上角（y2–6），落在 41dp 环的圆角切口之外，
-        // 与「今天」的双层环永不重叠 —— 所以绿盘不必缩小。
+        // 有体测：4dp 蓝点放格子右上角（y2–6、x35–39）。
+        // **点在盘外是硬约束**：蓝 #0A84FF 压绿底只有 1.80:1，压卡片底 4.66:1 ——
+        // 谁为了「对齐稿子」把点挪回圆内，就直接不可读。位置也是它不与「今天」41dp 环重叠的原因。
+        // end=8（不是 2）：零列间距下贴右边缘会让点读成「属于右边那一格」。
         if (hasMetric) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
+                    .padding(top = 2.dp, end = 8.dp)
                     .size(4.dp)
                     .clip(CircleShape)
                     .background(AppleSystemBlue)
