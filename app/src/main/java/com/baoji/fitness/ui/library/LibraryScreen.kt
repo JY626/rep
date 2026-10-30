@@ -789,16 +789,18 @@ internal fun BodyMetricSheet(
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            // 弹层内主按钮：48 / 圆角 16 / 14sp。刻意**不**跟屏级 CTA 的 58 / 29 / 17 统一 ——
+            // 这是两级尺寸：弹层是「就地确认」，屏幕底部才是页面主动作。
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(48.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(AppleFitnessGreen)
                     .clickable {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onSave(weight, fat, height, chest, waist, arm)
-                    }
-                    .padding(vertical = 12.dp),
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Text(

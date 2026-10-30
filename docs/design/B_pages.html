@@ -100,9 +100,8 @@ h1 s{text-decoration:none;color:var(--t2);font-weight:500}
 .dc span{position:relative;width:34px;height:34px;border-radius:14px;display:flex;align-items:center;justify-content:center;
   font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:13px;font-weight:500;color:var(--t2)}
 .dc.on span{background:var(--g);color:#000;font-weight:700}
-.dc.today span{box-shadow:0 0 0 1.5px var(--g)}
-.dc.today.on span{box-shadow:0 0 0 2px #000, 0 0 0 3.5px var(--g)}
-.dc .mdot{position:absolute;left:50%;bottom:-5px;transform:translateX(-50%);width:4px;height:4px;border-radius:2px;background:var(--b);box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+.dc.today span{box-shadow:0 0 0 2px var(--card), 0 0 0 3.5px var(--g)}
+.dc .mdot{position:absolute;top:2px;right:8px;width:4px;height:4px;border-radius:2px;background:var(--b);box-shadow:0 0 0 1px rgba(0,0,0,.5)}
 .legend{display:flex;align-items:center;gap:14px;height:48px;margin:4px 8px 0;border-top:1px solid var(--hair)}
 .legend span{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t2)}
 .legend i{width:8px;height:8px;border-radius:3px;display:block}
@@ -199,7 +198,7 @@ h1 s{text-decoration:none;color:var(--t2);font-weight:500}
 .recent .rr .tag{margin-left:auto;font-size:11px;color:var(--t2)}
 
 .foot{margin-top:auto;padding:16px 0 18px}
-.cta{height:58px;border-radius:29px;background:var(--g);color:#000;font-size:15px;font-weight:700;
+.cta{height:58px;border-radius:29px;background:var(--g);color:#000;font-size:17px;font-weight:700;
   display:flex;align-items:center;justify-content:center;gap:6px;letter-spacing:.4px}
 .cta svg{width:15px;height:15px;stroke:#000;fill:none;stroke-width:2.6;stroke-linecap:round}
 
@@ -251,7 +250,7 @@ h1 s{text-decoration:none;color:var(--t2);font-weight:500}
 .foldrow{display:flex;align-items:center;height:56px;margin-top:12px;padding:0 14px;background:var(--sub);border-radius:14px}
 .foldrow .t{font-size:13px;font-weight:600}
 .foldrow .m{margin-left:auto;margin-right:8px;font-size:11px;color:var(--t2);font-family:ui-monospace,Menlo,monospace}
-.save{height:58px;border-radius:29px;background:var(--g);color:#000;font-size:15px;font-weight:700;
+.save{height:48px;border-radius:16px;background:var(--g);color:#000;font-size:14px;font-weight:700;
   display:flex;align-items:center;justify-content:center;margin-top:20px;letter-spacing:.4px}
 .botpad{height:24px}
 
@@ -338,14 +337,14 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
               <div class="dc"><span>5</span></div>
               <div class="dc on"><span>6</span></div>
               <div class="dc on"><span>7</span></div>
-              <div class="dc"><span>8<i class="mdot"></i></span></div>
+              <div class="dc"><span>8</span><i class="mdot"></i></div>
               <div class="dc on"><span>9</span></div>
               <div class="dc on"><span>10</span></div>
               <div class="dc on"><span>11</span></div>
 
-              <div class="dc on"><span>12<i class="mdot"></i></span></div>
+              <div class="dc on"><span>12</span><i class="mdot"></i></div>
               <div class="dc on"><span>13</span></div>
-              <div class="dc on today"><span>14</span></div>
+              <div class="dc on today"><span>14</span><i class="mdot"></i></div>
               <div class="dc"><span>15</span></div>
               <div class="dc"><span>16</span></div>
               <div class="dc"><span>17</span></div>
@@ -401,7 +400,7 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
         </nav>
       </div>
       </div>
-    <div class="note"><b>状态</b> 非本月不渲染日号（应与 monthGridCells() 的 null → Spacer 一致）；非本月时 legend 右侧出现「回今天」，48dp 热区（本轮统一下限，非平台自动扩张）<br><b>别动</b> 水平内边距 8 与网格水平内边距 8 是一对——改任一边，格宽就从 47 变 49.3，整格重算<br><b>别动</b> 卡片顶边距 8 是有意的（结论卡/明细卡是 16）——改成 16 求「对齐」，底部余量就从 23 掉到 15<br><b>别动</b> 体测点必须在 34 盒下方（卡片底色上）——蓝 #0A84FF 压绿底只有 1.80:1，压卡片底 4.66:1；只换颜色不换位置会更糟</div>
+    <div class="note"><b>状态</b> 非本月不渲染日号（应与 monthGridCells() 的 null → Spacer 一致）；非本月时 legend 右侧出现「回今天」，48dp 热区（本轮统一下限，非平台自动扩张）；14 号那格是 <b>今天 + 已训练 + 有体测</b> 三态叠加，蓝点落右上角就是为它让的位<br><b>别动</b> 水平内边距 8 与网格水平内边距 8 是一对——改任一边，格宽就从 47 变 49.3，整格重算<br><b>别动</b> 卡片顶边距 8 是有意的（结论卡/明细卡是 16）——改成 16 求「对齐」，底部余量就从 23 掉到 15<br><b>别动</b> 体测点必须落在 34 盘<b>之外</b>（卡片底色上）——蓝 #0A84FF 压绿底只有 1.80:1、压卡片底 4.66:1。落位在格子右上角 x35–39 / y2–6，正好在 41 环的圆角切口里；换位置可以，落进绿底不行<br><b>别动</b> 今天描边环的包络 41（34 + 2 空气 + 1.5 环）是上限——再往外扩就压到右上角的点，也会贴近相邻格</div>
     </figure>
 
     <!-- ==================== ② 动作库 ==================== -->
@@ -789,7 +788,7 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
         </div>
       </div>
       </div>
-    <div class="note"><b>状态</b> 体重清空时：数值显示 --、保存按钮 <b>alpha 0.4 且 disabled</b>、助手文案换成「体重是趋势图的基础，填一个就行」<br><b>动效</b> 保存后折线新点 alpha 0→1 200ms、折线重绘 400ms；<b>不做数字滚动</b>（与 TalkBack 播报冲突）</div>
+    <div class="note"><b>状态</b> 体重清空时：数值显示 --、保存按钮 <b>alpha 0.4 且 disabled</b>、助手文案换成「体重是趋势图的基础，填一个就行」<br><b>动效</b> 保存后折线新点 alpha 0→1 200ms、折线重绘 400ms；<b>不做数字滚动</b>（与 TalkBack 播报冲突）<br><b>别动</b> 保存是弹层内的块状主按钮 48 高 / 圆角 16 / 14sp，<b>不是</b>屏级 58 / 29 / 17 胶囊——这是两级尺寸，别统一；现有代码是 44 / 16 / 14sp，只需把高度抬到 48</div>
     </figure>
 
   </div>
