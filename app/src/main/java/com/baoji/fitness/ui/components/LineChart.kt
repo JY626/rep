@@ -26,6 +26,8 @@ data class ChartPoint(
  *
  * @param zeroBased true = y 轴从 0 起（容量、围度这类绝对量）；false = 包住数据范围（E1RM，差异只有几 kg）
  * @param showXLabels 是否在底部画 x 轴标签
+ * @param xLabelTextSizePx x 轴标签字号（px）。默认 24px ≈ 8sp；调用方要满足
+ *   11sp 下限时传 `11.sp.toPx()`，底部留白会随之加高
  */
 @Composable
 fun MinimalLineChart(
@@ -33,7 +35,8 @@ fun MinimalLineChart(
     modifier: Modifier = Modifier,
     zeroBased: Boolean = true,
     showXLabels: Boolean = false,
-    lineColor: Color = AppleFitnessGreen
+    lineColor: Color = AppleFitnessGreen,
+    xLabelTextSizePx: Float = 24f
 ) {
     if (points.isEmpty()) return
 
@@ -51,7 +54,7 @@ fun MinimalLineChart(
     }
     val span = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
 
-    val labelReserve = if (showXLabels) 28f else 8f
+    val labelReserve = if (showXLabels) maxOf(28f, xLabelTextSizePx + 8f) else 8f
 
     Canvas(modifier = modifier.fillMaxWidth()) {
         val w = size.width
@@ -103,18 +106,21 @@ fun MinimalLineChart(
             )
         }
 
-        // x 轴标签：点太密时抽稀，只保证首尾一定画
+        // x 轴标签：按实际文字宽度贪心抽稀，字号变大后自动减少刻度，绝不重叠
         if (showXLabels) {
             val paint = android.graphics.Paint().apply {
                 color = 0xFF8E8E93.toInt()
-                textSize = 24f
+                textSize = xLabelTextSizePx
                 textAlign = android.graphics.Paint.Align.CENTER
                 isAntiAlias = true
             }
+            var lastLabelRight = Float.NEGATIVE_INFINITY
             points.forEachIndexed { i, pt ->
-                val isEdge = i == 0 || i == points.size - 1
-                if (isEdge || points.size <= 5 || i % 2 == 0) {
-                    drawContext.canvas.nativeCanvas.drawText(pt.label, xOf(i), size.height - 6f, paint)
+                val x = xOf(i)
+                val half = paint.measureText(pt.label) / 2f
+                if (x - half >= lastLabelRight + 8f) {
+                    drawContext.canvas.nativeCanvas.drawText(pt.label, x, size.height - 6f, paint)
+                    lastLabelRight = x + half
                 }
             }
         }

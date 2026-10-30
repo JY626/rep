@@ -1,5 +1,11 @@
 package com.baoji.fitness.ui.workout
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,15 +18,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -28,26 +41,45 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
 import com.baoji.fitness.data.repository.AiShareContext
 import com.baoji.fitness.ui.components.AiSharePreviewBottomSheet
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,10 +95,10 @@ import com.baoji.fitness.core.theme.AppleGray4
 import com.baoji.fitness.core.theme.AppleGray5
 import com.baoji.fitness.core.theme.AppleGray6
 import com.baoji.fitness.core.theme.AppleHairline
+import com.baoji.fitness.core.theme.AppleStrokeStrong
 import com.baoji.fitness.core.theme.AppleSystemRed
 import com.baoji.fitness.core.theme.AppleTextPrimary
 import com.baoji.fitness.core.theme.AppleTextSecondary
-import com.baoji.fitness.core.theme.AppleTextTertiary
 import com.baoji.fitness.domain.algorithm.OverloadCalculator
 import com.baoji.fitness.domain.model.PresetTemplates
 import com.baoji.fitness.domain.model.WorkoutRoutineTemplate
@@ -75,8 +107,16 @@ import com.baoji.fitness.ui.workout.components.RestTimerCapsule
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 fun formatWeight(w: Double): String = if (w % 1.0 == 0.0) w.toInt().toString() else w.toString()
+
+/**
+ * 输入面板的物理边界。超出就夹到边界并提示，而不是静默接受 ——
+ * 训练中手滑多按一个 0（200 → 2000kg）如果照单全收，这条脏数据会污染 PR 与后续加重建议。
+ */
+private const val MAX_SET_WEIGHT_KG = 500.0
+private const val MAX_SET_REPS = 100
 
 /**
  * 已用时 → `32:15`；超过 1 小时给 `1:05:30`（不显示 `65:30`，那读不出“一小时”）。
@@ -90,6 +130,14 @@ fun formatElapsed(totalSeconds: Long): String {
     return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
     else String.format(Locale.US, "%02d:%02d", m, sec)
 }
+
+/**
+ * 训练中 LazyColumn 里第一个动作卡之前有几个 item：
+ * 0 顶部条 / 1 Hero / 2 加重建议条 / 3「今日动作」表头 —— 动作卡从 index 4 开始。
+ * 手风琴展开前要 `animateScrollToItem(EXERCISE_ITEM_OFFSET + position)`。
+ * 上面增删 item 时必须同步改这个数，否则展开后会把目标行推出屏幕。
+ */
+private const val EXERCISE_ITEM_OFFSET = 4
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,9 +163,26 @@ fun WorkoutScreen(
     var shareContextToPreview by remember { mutableStateOf<AiShareContext?>(null) }
     var showShareSheet by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    // 折叠已完成动作：练到第 6 个动作时不用一路往下滚
-    var hideCompletedExercises by remember { mutableStateOf(false) }
     var activeEditingSet by remember { mutableStateOf<Pair<ExerciseEntity, WorkoutSetEntity>?>(null) }
+
+    /*
+     * 手风琴：同一时刻只允许一个动作展开。
+     * rememberSaveable 是为了切 Tab（训练→负荷→训练）回来还停在原来那个动作 ——
+     * 组间休息那 90 秒里用户十有八九会去翻负荷页，回来重新找动作是最烦的一步。
+     */
+    val listState = rememberLazyListState()
+    // 换一场训练（activeSession.id 变）就重新决定展开哪个动作，否则会停在上一次的动作 id 上
+    var expandedExerciseId by rememberSaveable(activeSession?.id) { mutableStateOf<Long?>(null) }
+    var expansionInitialized by rememberSaveable(activeSession?.id) { mutableStateOf(false) }
+    LaunchedEffect(exerciseGroups) {
+        if (!expansionInitialized && exerciseGroups.isNotEmpty()) {
+            // 默认展开第一个还有未完成组的动作；全部完成则全折叠
+            expandedExerciseId = exerciseGroups
+                .firstOrNull { group -> group.sets.any { !it.isCompleted } }
+                ?.exercise?.id
+            expansionInitialized = true
+        }
+    }
 
     val dateFormat = remember { SimpleDateFormat("M月d日 EEEE", Locale.CHINESE) }
     val currentDateText = remember(activeSession?.startTime) {
@@ -132,6 +197,20 @@ fun WorkoutScreen(
         .filter { it.setType != "WARMUP" }
         .sumOf { it.weightKg * it.reps }.toInt()
     val totalSetsCount = exerciseGroups.flatMap { it.sets }.size
+
+    // 环形进度与「剩余组数」只认正式组（排除热身），与完成训练时的容量口径保持一致
+    val formalSets = exerciseGroups.flatMap { it.sets }.filter { it.setType != "WARMUP" }
+    val formalTotalCount = formalSets.size
+    val formalCompletedCount = formalSets.count { it.isCompleted }
+
+    // 「下一个」与底部主按钮指向同一个目标：按列表顺序第一个还有未完成组的动作
+    val nextGroup = exerciseGroups.firstOrNull { group -> group.sets.any { !it.isCompleted } }
+    val nextOpenSet = nextGroup?.sets?.firstOrNull { !it.isCompleted }
+    val nextLineText = when {
+        nextGroup != null -> "下一个：${nextGroup.exercise.name} · 剩 ${nextGroup.sets.count { !it.isCompleted }} 组"
+        exerciseGroups.isNotEmpty() -> "今天全部完成"
+        else -> "点上方「计划」开始今日训练"
+    }
 
     // 加重建议：会话首个动作（主项）按双重渐进法，基于前次首组真实基准判定
     val firstGroup = exerciseGroups.firstOrNull()
@@ -152,6 +231,7 @@ fun WorkoutScreen(
             .background(AppleBlack)
     ) {
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
@@ -294,19 +374,19 @@ fun WorkoutScreen(
                 }
             }
 
-            // 2. Metrics Strip (Apple Fitness Style)
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(AppleGray6)
-                        .border(1.dp, AppleHairline, RoundedCornerShape(20.dp))
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceAround
-                ) {
-                    if (activeSession == null) {
-                        // 归档后：沿用今日已完成训练的真实数据
+            // 2. 主仪表（B 稿 Hero）：环形进度 + 三块读数 + 下一件事
+            item(key = "hero") {
+                if (activeSession == null) {
+                    // 归档态：沿用今日已完成训练的真实数据（不虚构进度环）
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(AppleGray6)
+                            .border(1.dp, AppleHairline, RoundedCornerShape(20.dp))
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
                         MetricItem(
                             label = "累计容量",
                             value = "${todaySummary?.totalVolumeKg?.toInt() ?: 0}",
@@ -318,19 +398,16 @@ fun WorkoutScreen(
                             unit = "组",
                             valueColor = AppleFitnessGreen
                         )
-                    } else {
-                        MetricItem(label = "累计容量", value = "$totalVolume", unit = "kg")
-                        MetricItem(
-                            label = "完成组数",
-                            value = "${completedSets.size}/$totalSetsCount",
-                            valueColor = AppleFitnessGreen
-                        )
-                        MetricItem(
-                            label = "本次用时",
-                            value = formatElapsed(elapsedSeconds),
-                            unit = null
-                        )
                     }
+                } else {
+                    WorkoutHeroCard(
+                        completedSets = formalCompletedCount,
+                        totalSets = formalTotalCount,
+                        volumeKg = totalVolume,
+                        elapsedText = formatElapsed(elapsedSeconds),
+                        remainingSets = formalTotalCount - formalCompletedCount,
+                        nextLine = nextLineText
+                    )
                 }
             }
 
@@ -416,7 +493,7 @@ fun WorkoutScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(text = "笔记", fontSize = 10.sp, color = AppleTextSecondary)
+                                Text(text = "笔记", fontSize = 12.sp, color = AppleTextSecondary)
                                 Text(text = note, fontSize = 12.sp, color = AppleTextPrimary)
                             }
                         }
@@ -512,46 +589,54 @@ fun WorkoutScreen(
                 }
             }
 
-            // 4. 折叠开关（仅训练中、且有已完成动作时才显示）
-            if (activeSession != null && exerciseGroups.any { g -> g.sets.all { it.isCompleted } }) {
-                item(key = "collapse-toggle") {
+            // 4. 今日动作表头（B 稿：动作数 + 组数一句话交代完）
+            if (activeSession != null && exerciseGroups.isNotEmpty()) {
+                item(key = "exercise-list-header") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(AppleGray6)
-                            .border(1.dp, AppleHairline, RoundedCornerShape(14.dp))
-                            .clickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                hideCompletedExercises = !hideCompletedExercises
-                            }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(horizontal = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (hideCompletedExercises) "显示已完成动作" else "折叠已完成动作",
+                            text = "今日动作",
                             fontSize = 12.sp,
-                            color = AppleTextSecondary
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppleTextPrimary
                         )
-                        val doneCount = exerciseGroups.count { g -> g.sets.all { it.isCompleted } }
                         Text(
-                            text = "$doneCount 个已完成",
+                            text = "${exerciseGroups.size} 个动作 · $totalSetsCount 组",
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = AppleFitnessGreen
+                            color = AppleTextSecondary
                         )
                     }
                 }
             }
 
-            // 5. Exercise Cards List
-            items(
-                if (hideCompletedExercises) exerciseGroups.filterNot { g -> g.sets.all { it.isCompleted } }
-                else exerciseGroups,
-                key = { it.exercise.id }
-            ) { group ->
+            // 5. Exercise Cards List（手风琴，key 用 "ex-${id}"）
+            itemsIndexed(
+                exerciseGroups,
+                key = { _, group -> "ex-${group.exercise.id}" }
+            ) { position, group ->
+                val isExpanded = expandedExerciseId == group.exercise.id
                 ExerciseCard(
+                    index = position + 1,
+                    expanded = isExpanded,
+                    onToggleExpand = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        // 先滚到该动作表头，再切展开态：展开会把后面的卡推下去，
+                        // 反过来做的话目标行会被推走，手指落在别的动作上
+                        if (!isExpanded) {
+                            scope.launch {
+                                listState.animateScrollToItem(EXERCISE_ITEM_OFFSET + position)
+                                expandedExerciseId = group.exercise.id
+                            }
+                        } else {
+                            expandedExerciseId = null
+                        }
+                    },
                     group = group,
                     onToggleSet = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -630,6 +715,58 @@ fun WorkoutScreen(
             },
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        /*
+         * 底部常驻主操作：与休息胶囊互斥，共用同一个底部槽位。
+         * 组行距屏底约 562dp（393×852），是必须换手的伸展区，而「完成第 N 组」
+         * 一天要点几十次 —— 所以它必须常驻在拇指舒适区内。
+         * 导航栏 inset 已由 MainScreen 的 Scaffold innerPadding 吃掉，这里不再叠加，
+         * 否则按钮会被顶高一整条导航栏。
+         */
+        if (activeSession != null) {
+            AnimatedVisibility(
+                visible = !isTimerVisible,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .height(58.dp)
+                        .clip(RoundedCornerShape(29.dp))
+                        .background(AppleFitnessGreen)
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val target = nextOpenSet
+                            if (target != null) {
+                                // 等价于勾选当前第一个未完成组（走同一条 ViewModel 路径）
+                                viewModel.toggleSetCompletion(target)
+                            } else {
+                                // 全部完成 → 复用现有完成弹窗（含备注与分享给 AI）
+                                showSummaryDialog = true
+                            }
+                        }
+                        .semantics {
+                            contentDescription = if (nextOpenSet != null) {
+                                "完成${nextGroup?.exercise?.name ?: ""}第 ${nextOpenSet.setOrder} 组，" +
+                                    "${formatWeight(nextOpenSet.weightKg)} 公斤 ${nextOpenSet.reps} 次"
+                            } else {
+                                "完成训练并归档"
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = nextOpenSet?.let { "完成第 ${it.setOrder} 组" } ?: "完成训练",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
 
         // Add Exercise Bottom Sheet
         if (showAddExerciseSheet) {
@@ -712,6 +849,132 @@ fun WorkoutScreen(
 }
 
 @Composable
+private fun WorkoutHeroCard(
+    completedSets: Int,
+    totalSets: Int,
+    volumeKg: Int,
+    elapsedText: String,
+    remainingSets: Int,
+    nextLine: String
+) {
+    val progress = if (totalSets > 0) completedSets.toFloat() / totalSets else 0f
+    // 2/12 → 17%（设计稿按四舍五入显示，截断会显示 16% 与环的视觉比例对不上）
+    val percent = if (totalSets > 0) (completedSets * 100.0 / totalSets).roundToInt() else 0
+    val animatedProgress by animateFloatAsState(targetValue = progress, label = "heroRing")
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(AppleGray6)
+            .border(1.dp, AppleHairline, RoundedCornerShape(20.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // 环形进度：72dp / 6dp 描边。环中央两行，别再加第三行 —— 72dp 放不下
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .semantics {
+                        // ProgressBarRangeInfo 的 range 不能是空区间（0..0 会直接抛异常），
+                        // 所以分母兜到 1；读屏文案仍报真实组数
+                        val safeTotal = totalSets.coerceAtLeast(1)
+                        progressBarRangeInfo = ProgressBarRangeInfo(
+                            current = completedSets.toFloat(),
+                            range = 0f..safeTotal.toFloat(),
+                            steps = safeTotal
+                        )
+                        contentDescription = "今日进度，共 $totalSets 组，已完成 $completedSets 组"
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier.size(72.dp),
+                    color = AppleFitnessGreen,
+                    trackColor = AppleGray5,
+                    strokeWidth = 6.dp
+                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "$completedSets/$totalSets",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = AppleTextPrimary
+                    )
+                    Text(
+                        text = "组 · $percent%",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                HeroReadout(label = "累计容量", value = "$volumeKg", unit = "kg")
+                HeroReadout(label = "本次用时", value = elapsedText, unit = null)
+                HeroReadout(
+                    label = "剩余组数",
+                    value = "$remainingSets",
+                    unit = null,
+                    highlight = remainingSets > 0
+                )
+            }
+        }
+
+        HorizontalDivider(color = AppleHairline, thickness = 0.5.dp)
+
+        Text(
+            text = nextLine,
+            fontSize = 12.sp,
+            color = AppleTextSecondary
+        )
+    }
+}
+
+/** Hero 右侧一行读数：左标签 12sp 次要色，右数值 17sp 等宽。 */
+@Composable
+private fun HeroReadout(
+    label: String,
+    value: String,
+    unit: String?,
+    highlight: Boolean = false
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom
+    ) {
+        Text(text = label, fontSize = 12.sp, color = AppleTextSecondary)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = value,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = if (highlight) AppleFitnessGreen else AppleTextPrimary
+            )
+            unit?.let {
+                Text(
+                    text = " $it",
+                    fontSize = 11.sp,
+                    color = AppleTextSecondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetricItem(
     label: String,
     value: String,
@@ -743,8 +1006,18 @@ private fun MetricItem(
     }
 }
 
+/**
+ * 动作卡（B 稿手风琴）。
+ *
+ * 折叠态只有一行 48dp：序号 + 动作名 + 肌群 + 进度 + chevron。
+ * 展开态才铺开组行 —— 训练时 90% 的时间只在「当前那个动作」上操作，
+ * 五个动作全部铺开时组行会被推到屏幕外的伸展区。
+ */
 @Composable
 private fun ExerciseCard(
+    index: Int,
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
     group: ExerciseGroup,
     onToggleSet: (WorkoutSetEntity) -> Unit,
     onOpenSetEditor: (WorkoutSetEntity) -> Unit,
@@ -758,135 +1031,243 @@ private fun ExerciseCard(
         "基准参考: 首次记录 · 暂无历史数据"
     }
 
+    val completedCount = group.sets.count { it.isCompleted }
+    val allDone = group.sets.isNotEmpty() && completedCount == group.sets.size
+    val progressText = when {
+        completedCount == 0 -> "未开始"
+        else -> "$completedCount/${group.sets.size}"
+    }
+    val progressColor = when {
+        allDone -> AppleFitnessGreen
+        completedCount == 0 -> AppleTextSecondary
+        else -> AppleTextPrimary
+    }
+    // ChevronRight 指向右；转 90° 朝下（折叠），转 -90° 朝上（展开）
+    val chevronAngle by animateFloatAsState(
+        targetValue = if (expanded) -90f else 90f,
+        label = "chevron"
+    )
+
+    val shape = RoundedCornerShape(if (expanded) 16.dp else 14.dp)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
+            .clip(shape)
             .background(AppleGray6)
-            .border(1.dp, AppleHairline, RoundedCornerShape(24.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Exercise Header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = group.exercise.name,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AppleTextPrimary
-                    )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(AppleGray5)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = group.exercise.targetMuscle,
-                            fontSize = 10.sp,
-                            color = AppleTextSecondary
-                        )
-                    }
+            .border(1.dp, if (expanded) AppleHairline else AppleHairline.copy(alpha = 0.6f), shape)
+            // 展开态左侧 3dp 绿条：画在整张卡上（含表头行）。
+            // 用 drawBehind 而不是 fillMaxHeight —— 后者在 wrap-content 的卡片里没有有界高度，会塌成 0
+            .drawBehind {
+                if (expanded) {
+                    drawRect(color = AppleFitnessGreen, size = Size(3.dp.toPx(), size.height))
                 }
+            }
+    ) {
+        // 表头行：折叠 48dp / 展开 56dp，两种状态都是可点区域
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (expanded) 56.dp else 48.dp)
+                .clickable(
+                    onClickLabel = if (expanded) "收起" else "展开",
+                    onClick = onToggleExpand
+                )
+                .padding(start = if (expanded) 15.dp else 12.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 20.dp, height = 20.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(if (expanded) AppleFitnessGreen else AppleGray5),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "$index",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (expanded) Color.Black else AppleTextSecondary
+                )
+            }
+
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 名称可截断，肌群标签永远可见：非定宽子项先量，weight 子项吃剩余
+                Text(
+                    text = group.exercise.name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppleTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Text(
+                    text = group.exercise.targetMuscle,
+                    fontSize = 12.sp,
+                    color = AppleTextSecondary,
+                    maxLines = 1
+                )
+            }
+
+            Text(
+                text = progressText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = FontFamily.Monospace,
+                color = progressColor
+            )
+
+            Icon(
+                imageVector = LucideIcons.ChevronRight,
+                contentDescription = null,
+                tint = AppleTextSecondary,
+                modifier = Modifier
+                    .size(16.dp)
+                    .rotate(chevronAngle)
+            )
+        }
+
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 15.dp, end = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
                     text = benchmarkSub,
                     fontSize = 11.sp,
                     color = AppleTextSecondary,
-                    modifier = Modifier.padding(top = 2.dp)
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
 
-            // Remove exercise action
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(AppleGray5)
-                    .clickable { onRemoveExercise() }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "移除",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = AppleSystemRed.copy(alpha = 0.9f)
-                )
+                ColumnLabelRow(trackWeight = group.exercise.trackWeight)
+
+                // 组行：key 让勾选/编辑后不错位（折叠切换时列表会重排）
+                group.sets.forEach { set ->
+                    val prevSet = group.previousSessionSets[set.setOrder]
+                    val trackW = group.exercise.trackWeight
+                    val setBenchmarkText = when {
+                        prevSet == null -> "-"
+                        trackW && prevSet.weightKg > 0.0 -> "${formatWeight(prevSet.weightKg)} × ${prevSet.reps}"
+                        !trackW -> "× ${prevSet.reps}"
+                        else -> "-"
+                    }
+                    key("set-${set.id}") {
+                        SetRowItem(
+                            set = set,
+                            benchmarkText = setBenchmarkText,
+                            trackWeight = trackW,
+                            onToggle = { onToggleSet(set) },
+                            onOpenEditor = { onOpenSetEditor(set) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClickLabel = "添加一组", onClick = onAddSet)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = LucideIcons.Plus,
+                            contentDescription = null,
+                            tint = AppleFitnessGreen,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "添加一组",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AppleFitnessGreen
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClickLabel = "从今日训练移除该动作", onClick = onRemoveExercise)
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "移除动作",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = AppleSystemRed.copy(alpha = 0.9f)
+                        )
+                    }
+                }
             }
         }
+    }
+}
 
-        // Table Header
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(text = "组", fontSize = 11.sp, color = AppleTextTertiary, modifier = Modifier.weight(0.9f), textAlign = TextAlign.Center)
-            Text(text = "参考基准", fontSize = 11.sp, color = AppleTextTertiary, modifier = Modifier.weight(1.8f), textAlign = TextAlign.Center)
-            Text(text = if (group.exercise.trackWeight) "重量(kg)" else "负重", fontSize = 11.sp, color = AppleTextTertiary, modifier = Modifier.weight(1.7f), textAlign = TextAlign.Center)
-            Text(text = "次数", fontSize = 11.sp, color = AppleTextTertiary, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
-            Text(text = "完成", fontSize = 11.sp, color = AppleTextTertiary, modifier = Modifier.weight(1.2f), textAlign = TextAlign.Center)
-        }
-
-        // Sets Rows with stable keys
-        group.sets.forEach { set ->
-            val prevSet = group.previousSessionSets[set.setOrder]
-            val trackW = group.exercise.trackWeight
-            val setBenchmarkText = when {
-                prevSet == null -> "-"
-                trackW && prevSet.weightKg > 0.0 -> "${formatWeight(prevSet.weightKg)} × ${prevSet.reps}"
-                !trackW -> "× ${prevSet.reps}"
-                else -> "-"
-            }
-            key(set.id) {
-                SetRowItem(
-                    set = set,
-                    benchmarkText = setBenchmarkText,
-                    trackWeight = trackW,
-                    onToggle = { onToggleSet(set) },
-                    onOpenEditor = { onOpenSetEditor(set) }
-                )
-            }
-        }
-
-        // Add Set Button
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 6.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(AppleGray5.copy(alpha = 0.5f))
-                .clickable { onAddSet() }
-                .padding(vertical = 10.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = LucideIcons.Plus,
-                    contentDescription = null,
-                    tint = AppleFitnessGreen,
-                    modifier = Modifier.size(13.dp)
-                )
-                Text(
-                    text = "添加一组",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppleFitnessGreen
-                )
-            }
-        }
+/** 组行表头：列宽必须和 [SetRowItem] 完全一致，否则数字看起来不齐会显得很廉价。 */
+@Composable
+private fun ColumnLabelRow(trackWeight: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "组",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            modifier = Modifier.width(22.dp),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "参考基准",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            modifier = Modifier.weight(1f),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = if (trackWeight) "重量" else "负重",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            modifier = Modifier.width(72.dp),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "次数",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            modifier = Modifier.width(56.dp),
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "完成",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            modifier = Modifier.width(52.dp),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -907,100 +1288,155 @@ private fun SetRowItem(
         else -> "${set.setOrder}"
     }
 
+    // 整个动作的重量/次数对读屏是一句话：分组「第 3 组，40 公斤 8 次」比「40」「8」可用得多
+    val weightText = if (trackWeight) formatWeight(set.weightKg) else "自重"
+    val setDescription = "第 ${set.setOrder} 组，$weightText ${set.reps} 次"
+
+    /*
+     * 行高 52dp 定死，所有可点元素的外层容器一律 48dp 高：
+     * 训练时手上带汗带粉，26dp 的 pill 是误触/漏触高发区。
+     * 注意不能用 Modifier.minimumInteractiveComponentSize() —— 它会给定高行加最小尺寸，
+     * 把 52dp 的行撑变形。
+     */
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .height(52.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(rowBg)
-            .border(1.dp, AppleHairline.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-            .padding(vertical = 4.dp, horizontal = 4.dp),
+            .border(1.dp, AppleHairline.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // 1. Order / Set Type Badge (Clickable to edit)
+        // 1. 序号 / 组类型徽标 —— 视觉 22dp 宽，热区 48dp 高
         Box(
             modifier = Modifier
-                .weight(0.9f)
+                .width(22.dp)
+                .height(48.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { onOpenEditor() }
-                .padding(vertical = 6.dp),
+                .clickable(onClickLabel = "调整第 ${set.setOrder} 组", onClick = onOpenEditor)
+                .semantics { contentDescription = "$setDescription，点按调整" },
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = typeLabel,
                 fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.SemiBold,
                 color = if (set.isCompleted) AppleFitnessGreen else AppleTextSecondary
             )
         }
 
-        // 2. Reference Benchmark (Previous Best / Target)
+        // 2. 参考基准（前次成绩），只读，不参与点击
         Text(
             text = benchmarkText,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontFamily = FontFamily.Monospace,
-            color = AppleTextTertiary,
-            modifier = Modifier.weight(1.8f),
+            color = AppleTextSecondary,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
 
-        // 3. Weight Pill (Click to open Stepper Editor)
+        // 3. 重量 pill —— 热区 48dp 高，视觉 32dp
         Box(
             modifier = Modifier
-                .weight(1.7f)
+                .width(72.dp)
+                .height(48.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(AppleGray5)
-                .clickable { onOpenEditor() }
-                .padding(vertical = 6.dp, horizontal = 4.dp),
+                .clickable(onClickLabel = "修改重量", onClick = onOpenEditor),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = if (trackWeight) formatWeight(set.weightKg) else "自重",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = AppleTextPrimary
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AppleGray5),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = if (trackWeight) formatWeight(set.weightKg) else "自重",
+                    fontSize = if (trackWeight) 17.sp else 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = AppleTextPrimary,
+                    maxLines = 1
+                )
+                if (trackWeight) {
+                    Text(
+                        text = " kg",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary,
+                        maxLines = 1
+                    )
+                }
+            }
         }
 
-        Spacer(modifier = Modifier.size(4.dp))
-
-        // 4. Reps Pill (Click to open Stepper Editor)
+        // 4. 次数 pill —— 热区 48dp 高，视觉 32dp
         Box(
             modifier = Modifier
-                .weight(1.2f)
+                .width(56.dp)
+                .height(48.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(AppleGray5)
-                .clickable { onOpenEditor() }
-                .padding(vertical = 6.dp, horizontal = 4.dp),
+                .clickable(onClickLabel = "修改次数", onClick = onOpenEditor),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "${set.reps}",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = AppleTextPrimary
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AppleGray5),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "${set.reps}",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = AppleTextPrimary,
+                    maxLines = 1
+                )
+                Text(
+                    text = " 次",
+                    fontSize = 11.sp,
+                    color = AppleTextSecondary,
+                    maxLines = 1
+                )
+            }
         }
 
-        // 5. Complete Button (Full cell height 44dp clickable target)
+        // 5. 勾选 —— 视觉圆环 26dp，热区 52×48dp
         Box(
             modifier = Modifier
-                .weight(1.2f)
-                .height(44.dp)
+                .width(52.dp)
+                .height(48.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .clickable { onToggle() },
+                .toggleable(
+                    value = set.isCompleted,
+                    role = Role.Checkbox,
+                    onValueChange = { onToggle() }
+                )
+                .semantics(mergeDescendants = true) {
+                    contentDescription = setDescription
+                    stateDescription = if (set.isCompleted) "已完成" else "未完成"
+                },
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(26.dp)
                     .clip(CircleShape)
                     .background(if (set.isCompleted) AppleFitnessGreen else Color.Transparent)
                     .border(
                         width = 1.5.dp,
-                        color = if (set.isCompleted) AppleFitnessGreen else AppleHairline,
+                        // 未勾选圆环用 35% 白：10% 白在黑底上几乎看不见
+                        color = if (set.isCompleted) AppleFitnessGreen else AppleStrokeStrong,
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
@@ -1028,13 +1464,106 @@ private fun QuickAdjustSetBottomSheet(
     onSave: (Double, Int, String, Double?) -> Unit,
     onDelete: () -> Unit
 ) {
-    var currentWeight by remember(set.weightKg) { mutableStateOf(set.weightKg) }
-    var currentReps by remember(set.reps) { mutableStateOf(set.reps) }
+    // 文本态与落库值分开：允许输入中途的空串/半个小数，但落库只认夹逼后的合法值
+    var currentWeight by remember(set.weightKg) {
+        mutableStateOf(set.weightKg.coerceIn(0.0, MAX_SET_WEIGHT_KG))
+    }
+    var currentReps by remember(set.reps) { mutableStateOf(set.reps.coerceIn(0, MAX_SET_REPS)) }
     var currentType by remember(set.setType) { mutableStateOf(set.setType) }
     // M3a：RPE 默认不填（null）。只作记录与 M4 上下文，不参与双重渐进判定。
     var currentRpe by remember(set.rpe) { mutableStateOf(set.rpe) }
 
+    var weightField by remember(set.weightKg) {
+        val text = formatWeight(set.weightKg.coerceIn(0.0, MAX_SET_WEIGHT_KG))
+        // 进来就全选：健身房最常见的操作是「直接打一个新数字」，不是定位光标
+        mutableStateOf(TextFieldValue(text, selection = TextRange(0, text.length)))
+    }
+    var repsField by remember(set.reps) {
+        val text = "${set.reps.coerceIn(0, MAX_SET_REPS)}"
+        mutableStateOf(TextFieldValue(text, selection = TextRange(0, text.length)))
+    }
+    var weightHint by remember(set.weightKg) { mutableStateOf<String?>(null) }
+    var repsHint by remember(set.reps) { mutableStateOf<String?>(null) }
+
     val haptic = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current
+    val weightFocus = remember { FocusRequester() }
+    val repsFocus = remember { FocusRequester() }
+
+    fun onWeightText(new: TextFieldValue) {
+        // Decimal 键盘在部分机型仍会给出逗号或负号，这里统一过滤成「数字 + 至多一个点」
+        val filtered = buildString {
+            var hasDot = false
+            new.text.forEach { c ->
+                when {
+                    c.isDigit() -> append(c)
+                    (c == '.' || c == ',') && !hasDot -> {
+                        append('.')
+                        hasDot = true
+                    }
+                }
+            }
+        }
+        val selection = TextRange(
+            new.selection.start.coerceIn(0, filtered.length),
+            new.selection.end.coerceIn(0, filtered.length)
+        )
+        val parsed = filtered.toDoubleOrNull()
+        when {
+            parsed == null -> {
+                // 空串/只有小数点：让他继续打，落库值先按 0
+                weightField = TextFieldValue(filtered, selection)
+                currentWeight = 0.0
+                weightHint = null
+            }
+            parsed > MAX_SET_WEIGHT_KG -> {
+                val clamped = formatWeight(MAX_SET_WEIGHT_KG)
+                weightField = TextFieldValue(clamped, selection = TextRange(clamped.length))
+                currentWeight = MAX_SET_WEIGHT_KG
+                weightHint = "单组上限 ${MAX_SET_WEIGHT_KG.toInt()}kg"
+            }
+            else -> {
+                weightField = TextFieldValue(filtered, selection)
+                currentWeight = parsed
+                weightHint = null
+            }
+        }
+    }
+
+    fun onRepsText(new: TextFieldValue) {
+        val filtered = new.text.filter { it.isDigit() }
+        val selection = TextRange(
+            new.selection.start.coerceIn(0, filtered.length),
+            new.selection.end.coerceIn(0, filtered.length)
+        )
+        val parsed = filtered.toIntOrNull()
+        when {
+            parsed == null -> {
+                repsField = TextFieldValue(filtered, selection)
+                currentReps = 0
+                repsHint = null
+            }
+            parsed > MAX_SET_REPS -> {
+                val clamped = "$MAX_SET_REPS"
+                repsField = TextFieldValue(clamped, selection = TextRange(clamped.length))
+                currentReps = MAX_SET_REPS
+                repsHint = "单组上限 $MAX_SET_REPS 次"
+            }
+            else -> {
+                repsField = TextFieldValue(filtered, selection)
+                currentReps = parsed
+                repsHint = null
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        // 等两帧再要焦点：ModalBottomSheet 的内容挂载 + 窗口拿焦点都需要时间，
+        // 太早调用 requestFocus 会抛 IllegalStateException（FocusRequester 还没 attach）
+        withFrameNanos { }
+        withFrameNanos { }
+        runCatching { if (trackWeight) weightFocus.requestFocus() else repsFocus.requestFocus() }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1054,6 +1583,9 @@ private fun QuickAdjustSetBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                // 现在进面板就自动聚焦、弹数字键盘（enableEdgeToEdge 下 adjustResize 不再生效，
+                // 不吃 IME inset 的话键盘会盖住下半截面板）
+                .imePadding()
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -1111,13 +1643,14 @@ private fun QuickAdjustSetBottomSheet(
                     Box(
                         modifier = Modifier
                             .weight(1f)
+                            // 44dp：组类型是训练中要频繁改的开关，24dp 高按不准
+                            .height(44.dp)
                             .clip(RoundedCornerShape(11.dp))
                             .background(if (isSelected) Color.White else Color.Transparent)
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentType = type
-                            }
-                            .padding(vertical = 6.dp),
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -1145,13 +1678,53 @@ private fun QuickAdjustSetBottomSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(text = "负荷重量", fontSize = 12.sp, color = AppleTextSecondary)
-                    Text(
-                        text = "${formatWeight(currentWeight)} kg",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = AppleFitnessGreen
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .width(104.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                // 输入框边框用 35% 白：10% 白在黑底上等于没有边框
+                                .border(1.dp, AppleStrokeStrong, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            BasicTextField(
+                                value = weightField,
+                                onValueChange = { onWeightText(it) },
+                                textStyle = TextStyle(
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = AppleFitnessGreen,
+                                    textAlign = TextAlign.End
+                                ),
+                                cursorBrush = SolidColor(AppleFitnessGreen),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Decimal,
+                                    imeAction = ImeAction.Done
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onDone = { focusManager.clearFocus() }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(weightFocus)
+                                    .semantics {
+                                        contentDescription = "第 ${set.setOrder} 组重量，单位公斤，可输入"
+                                    }
+                            )
+                        }
+                        Text(
+                            text = " kg",
+                            fontSize = 12.sp,
+                            color = AppleTextSecondary,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
+
+                weightHint?.let { hint ->
+                    Text(text = hint, fontSize = 11.sp, color = AppleCautionOrange)
                 }
 
                 // Quick Weight Increment / Decrement Pills
@@ -1164,14 +1737,23 @@ private fun QuickAdjustSetBottomSheet(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .height(44.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AppleGray6)
                                 .clickable {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    val next = (currentWeight + delta).coerceAtLeast(0.0)
-                                    currentWeight = (next * 10).toInt() / 10.0
-                                }
-                                .padding(vertical = 8.dp),
+                                    val next = (currentWeight + delta)
+                                        .coerceIn(0.0, MAX_SET_WEIGHT_KG)
+                                    val stepped = (next * 10).toInt() / 10.0
+                                    currentWeight = stepped
+                                    val text = formatWeight(stepped)
+                                    weightField = TextFieldValue(text, selection = TextRange(text.length))
+                                    weightHint = if (next >= MAX_SET_WEIGHT_KG) {
+                                        "单组上限 ${MAX_SET_WEIGHT_KG.toInt()}kg"
+                                    } else {
+                                        null
+                                    }
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -1200,13 +1782,52 @@ private fun QuickAdjustSetBottomSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(text = "完成次数", fontSize = 12.sp, color = AppleTextSecondary)
-                    Text(
-                        text = "$currentReps 次",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = AppleTextPrimary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .width(76.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, AppleStrokeStrong, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            BasicTextField(
+                                value = repsField,
+                                onValueChange = { onRepsText(it) },
+                                textStyle = TextStyle(
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = AppleTextPrimary,
+                                    textAlign = TextAlign.End
+                                ),
+                                cursorBrush = SolidColor(AppleFitnessGreen),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onDone = { focusManager.clearFocus() }
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(repsFocus)
+                                    .semantics {
+                                        contentDescription = "第 ${set.setOrder} 组次数，可输入"
+                                    }
+                            )
+                        }
+                        Text(
+                            text = " 次",
+                            fontSize = 12.sp,
+                            color = AppleTextSecondary,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                    }
+                }
+
+                repsHint?.let { hint ->
+                    Text(text = hint, fontSize = 11.sp, color = AppleCautionOrange)
                 }
 
                 // Quick Reps Steppers
@@ -1219,13 +1840,17 @@ private fun QuickAdjustSetBottomSheet(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .height(44.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AppleGray6)
                                 .clickable {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    currentReps = (currentReps + delta).coerceAtLeast(1)
-                                }
-                                .padding(vertical = 8.dp),
+                                    val next = (currentReps + delta).coerceIn(0, MAX_SET_REPS)
+                                    currentReps = next
+                                    val text = "$next"
+                                    repsField = TextFieldValue(text, selection = TextRange(text.length))
+                                    repsHint = if (next >= MAX_SET_REPS) "单组上限 $MAX_SET_REPS 次" else null
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -1257,8 +1882,8 @@ private fun QuickAdjustSetBottomSheet(
                         Text(text = "RPE 主观疲劳度", fontSize = 12.sp, color = AppleTextSecondary)
                         Text(
                             text = "可选 · 只记录不参与加重判定",
-                            fontSize = 10.sp,
-                            color = AppleTextTertiary
+                            fontSize = 11.sp,
+                            color = AppleTextSecondary
                         )
                     }
                     Text(
@@ -1266,7 +1891,7 @@ private fun QuickAdjustSetBottomSheet(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
-                        color = if (currentRpe != null) AppleFitnessGreen else AppleTextTertiary
+                        color = if (currentRpe != null) AppleFitnessGreen else AppleTextSecondary
                     )
                 }
 
@@ -1533,8 +2158,13 @@ private fun WorkoutSummaryDialog(
                     .padding(vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "总容量", fontSize = 10.sp, color = AppleTextSecondary)
+                // 两列都用 weight(1f)：标签从 10sp 提到 12sp 后两列宽度若按内容算会左右不等，
+                // weight 定死半宽、内容居中，视觉上才是真对齐
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(text = "总容量", fontSize = 12.sp, color = AppleTextSecondary)
                     Text(
                         text = "$totalVolumeKg kg",
                         fontSize = 15.sp,
@@ -1543,8 +2173,11 @@ private fun WorkoutSummaryDialog(
                         color = AppleFitnessGreen
                     )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "完成组数", fontSize = 10.sp, color = AppleTextSecondary)
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(text = "完成组数", fontSize = 12.sp, color = AppleTextSecondary)
                     Text(
                         text = "$completedSetsCount 组",
                         fontSize = 15.sp,
@@ -1581,7 +2214,7 @@ private fun WorkoutSummaryDialog(
                         Text(
                             text = "记一句感受，私教会读它",
                             fontSize = 12.sp,
-                            color = AppleTextTertiary
+                            color = AppleTextSecondary
                         )
                     }
                     BasicTextField(
@@ -1816,7 +2449,7 @@ private fun RoutineTemplateBottomSheet(
                             Text(
                                 text = "输入训练名称 (如: 肩臂专项)",
                                 fontSize = 13.sp,
-                                color = AppleTextTertiary
+                                color = AppleTextSecondary
                             )
                         }
                         BasicTextField(
