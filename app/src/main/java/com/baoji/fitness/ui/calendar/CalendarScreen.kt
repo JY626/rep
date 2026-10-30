@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,7 +20,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
@@ -37,17 +44,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.health.connect.client.PermissionController
 import com.baoji.fitness.core.database.entity.BodyMetricEntity
 import com.baoji.fitness.core.designsystem.icons.LucideIcons
@@ -62,6 +78,7 @@ import com.baoji.fitness.core.theme.AppleGray4
 import com.baoji.fitness.core.theme.AppleGray5
 import com.baoji.fitness.core.theme.AppleGray6
 import com.baoji.fitness.core.theme.AppleHairline
+import com.baoji.fitness.core.theme.AppleSystemBlue
 import com.baoji.fitness.core.theme.AppleTextPrimary
 import com.baoji.fitness.core.theme.AppleTextSecondary
 import com.baoji.fitness.core.theme.AppleTextTertiary
@@ -89,6 +106,9 @@ fun CalendarScreen(
     val dayMetric by viewModel.dayMetric.collectAsState()
     val habit by viewModel.habit.collectAsState()
     val reminderConfig by viewModel.reminderConfig.collectAsState()
+    val monthVolume by viewModel.monthVolume.collectAsState()
+    val metricDays by viewModel.metricDays.collectAsState()
+    val todayDetail by viewModel.todayDetail.collectAsState()
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -141,114 +161,89 @@ fun CalendarScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(AppleBlack)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Spacer(modifier = Modifier.height(12.dp))
-        Column {
-            Text(
-                text = "TRAINING LOG",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AppleTextSecondary,
-                letterSpacing = 0.5.sp
-            )
-            Text(
-                text = "每日记录",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = AppleTextPrimary,
-                letterSpacing = (-0.5).sp
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    // 系统返回键要先退回日历，而不是直接退出这个 tab
+    BackHandler(enabled = showSettings) { showSettings = false }
+    // 主页与设置二级页互斥。用 SaveableStateHolder 而不是普通条件渲染：
+    // 离开组合时 rememberSaveable 的存档会随子树一起被丢掉，回来就回到顶部、
+    // 月份也被重置（rememberScrollState 内部正是 rememberSaveable）。
+    val stateHolder = rememberSaveableStateHolder()
+
+    val onToggleHealthConnect: (Boolean) -> Unit = { enabled ->
+        viewModel.setHealthConnectEnabled(enabled)
+        if (enabled && isHealthConnectAvailable && !hasHealthPermissions) {
+            healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
+        }
+    }
+    val onRequestHealthPermissions: () -> Unit = {
+        healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
+    }
+    val onSyncHealthConnect: () -> Unit = {
+        if (isHealthConnectAvailable && !hasHealthPermissions) {
+            healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
+        } else {
+            viewModel.syncFromHealthConnect(context) { result ->
+                result.onSuccess { count ->
+                    if (count > 0) {
+                        Toast.makeText(context, "成功从 Health Connect 同步 $count 天身体数据！", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "暂无更新的身体数据需要同步", Toast.LENGTH_SHORT).show()
+                    }
+                }.onFailure { err ->
+                    Toast.makeText(context, "同步失败: ${err.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    val onExportBackup: () -> Unit = {
+        viewModel.exportBackup { result ->
+            result.onSuccess { file ->
+                viewModel.shareBackup(file)
+            }.onFailure { err ->
+                Toast.makeText(context, "导出失败: ${err.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val onImportBackup: () -> Unit = {
+        importFileLauncher.launch(arrayOf("application/json", "*/*"))
+    }
+
+    if (showSettings) {
+        stateHolder.SaveableStateProvider("calendar-settings") {
+            TrainingSettingsPage(
+                config = reminderConfig,
+                hasHealthPermissions = hasHealthPermissions,
+                isHealthConnectAvailable = isHealthConnectAvailable,
+                onSetRestSeconds = { viewModel.setRestSeconds(it) },
+                onToggleReminder = { viewModel.setReminderEnabled(it) },
+                onTimeChange = { h, m -> viewModel.setReminderTime(h, m) },
+                onToggleDay = { viewModel.toggleTrainingDay(it) },
+                onToggleHealthConnect = onToggleHealthConnect,
+                onRequestHealthPermissions = onRequestHealthPermissions,
+                onSync = onSyncHealthConnect,
+                onExport = onExportBackup,
+                onImport = onImportBackup,
+                onBack = { showSettings = false },
+                modifier = modifier
             )
         }
-
-        // M2：习惯徽章 + 本周还剩几练
-        HabitBanner(
-            currentStreak = habit.currentStreak,
-            longestStreak = habit.longestStreak,
-            remainingThisWeek = habit.remainingThisWeek
-        )
-
-        TrainingCheckInCalendar(
-            trainedDayTypes = trainedDayTypes,
-            onDaySelected = { viewModel.selectDay(it) }
-        )
-
-        Text(
-            text = "点日期查看当天训练明细与身体数据",
-            fontSize = 12.sp,
-            color = AppleTextTertiary
-        )
-
-        // 训练设置：组间休息时长（打勾后自动开始）
-        RestDurationCard(
-            restSeconds = reminderConfig.restSeconds,
-            onChange = { viewModel.setRestSeconds(it) }
-        )
-
-        // M2：训练日提醒设置
-        ReminderSettingsCard(
-            config = reminderConfig,
-            onToggleEnabled = { viewModel.setReminderEnabled(it) },
-            onTimeChange = { h, m -> viewModel.setReminderTime(h, m) },
-            onToggleDay = { viewModel.toggleTrainingDay(it) }
-        )
-
-        // P1：Health Connect 自动同步设置
-        HealthConnectSettingsCard(
-            enabled = reminderConfig.healthConnectEnabled,
-            hasPermissions = hasHealthPermissions,
-            isAvailable = isHealthConnectAvailable,
-            onToggle = { enabled ->
-                viewModel.setHealthConnectEnabled(enabled)
-                if (enabled && isHealthConnectAvailable && !hasHealthPermissions) {
-                    healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
-                }
-            },
-            onRequestPermissions = {
-                healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
-            },
-            onSync = {
-                if (isHealthConnectAvailable && !hasHealthPermissions) {
-                    healthConnectLauncher.launch(HealthConnectWriter.PERMISSIONS)
-                } else {
-                    viewModel.syncFromHealthConnect(context) { result ->
-                        result.onSuccess { count ->
-                            if (count > 0) {
-                                Toast.makeText(context, "成功从 Health Connect 同步 $count 天身体数据！", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "暂无更新的身体数据需要同步", Toast.LENGTH_SHORT).show()
-                            }
-                        }.onFailure { err ->
-                            Toast.makeText(context, "同步失败: ${err.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-        )
-
-        // P0：数据备份与恢复设置
-        DataBackupSettingsCard(
-            onExport = {
-                viewModel.exportBackup { result ->
-                    result.onSuccess { file ->
-                        viewModel.shareBackup(file)
-                    }.onFailure { err ->
-                        Toast.makeText(context, "导出失败: ${err.message}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            },
-            onImport = {
-                importFileLauncher.launch(arrayOf("application/json", "*/*"))
-            }
-        )
-
-        Spacer(modifier = Modifier.height(80.dp))
+    } else {
+        stateHolder.SaveableStateProvider("calendar-home") {
+            CalendarHome(
+                trainedDayTypes = trainedDayTypes,
+                metricDays = metricDays,
+                habit = habit,
+                monthVolume = monthVolume,
+                config = reminderConfig,
+                todayDetail = todayDetail,
+                hasHealthPermissions = hasHealthPermissions,
+                isHealthConnectAvailable = isHealthConnectAvailable,
+                onDaySelected = { viewModel.selectDay(it) },
+                onOpenTodayDetail = { viewModel.selectDay(LocalDate.now()) },
+                onOpenSettings = { showSettings = true },
+                modifier = modifier
+            )
+        }
     }
 
     // 当天训练明细弹层
@@ -257,6 +252,7 @@ fun CalendarScreen(
             day = selectedDay!!,
             detail = dayDetail,
             metric = dayMetric,
+            typeLabel = trainedDayTypes[selectedDay!!],
             onRecordMetric = { showDayMetricSheet = true },
             onShareToAi = {
                 dayDetail?.let { detail ->
@@ -374,12 +370,115 @@ fun CalendarScreen(
     }
 }
 
-/** 🔥 连续 N 天 · 最长 M 天 + 本周还剩 K 练。 */
+/**
+ * 日历主页：页首三块结论 → 月历 → 今日明细入口 → 设置入口。
+ * 设置类内容全部收进二级页，这一页只留日历和数字。
+ */
 @Composable
-private fun HabitBanner(
-    currentStreak: Int,
-    longestStreak: Int,
-    remainingThisWeek: Int
+private fun CalendarHome(
+    trainedDayTypes: Map<LocalDate, String>,
+    metricDays: Set<LocalDate>,
+    habit: HabitSummary,
+    monthVolume: MonthVolume,
+    config: ReminderConfig,
+    todayDetail: WorkoutDayDetail?,
+    hasHealthPermissions: Boolean,
+    isHealthConnectAvailable: Boolean,
+    onDaySelected: (LocalDate) -> Unit,
+    onOpenTodayDetail: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val today = LocalDate.now()
+    val month = YearMonth.from(today)
+    val checkInDays = remember(trainedDayTypes, month) {
+        trainedDayTypes.keys.count { YearMonth.from(it) == month }
+    }
+    // 本月计划天数：把每周训练日铺到当月天数上。纯展示口径，不参与任何统计。
+    val plannedDaysThisMonth = remember(config.trainingDays, month) {
+        (1..month.lengthOfMonth()).count { month.atDay(it).dayOfWeek in config.trainingDays }
+    }
+    val context = LocalContext.current
+    // 从设置页返回时这棵子树会重建，权限状态因此天然刷新一次
+    val hasNotificationPermission = remember { notificationPermissionGranted(context) }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(AppleBlack)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Column {
+            Text(
+                text = "TRAINING LOG",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppleTextSecondary,
+                letterSpacing = 0.5.sp
+            )
+            Text(
+                text = "每日记录",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppleTextPrimary,
+                letterSpacing = (-0.5).sp
+            )
+        }
+
+        SummaryTriple(
+            checkInDays = checkInDays,
+            checkInSub = if (plannedDaysThisMonth > 0) "计划 $plannedDaysThisMonth 天" else null,
+            streakDays = habit.currentStreak,
+            streakSub = if (habit.longestStreak > 0) "最长 ${habit.longestStreak} 天" else null,
+            volumeKg = monthVolume.currentKg,
+            volumeSub = if (monthVolume.previousKg > 0.0) "↑ 上月 ${formatKg(monthVolume.previousKg)} kg" else null
+        )
+
+        TrainingCheckInCalendar(
+            trainedDayTypes = trainedDayTypes,
+            metricDays = metricDays,
+            onDaySelected = onDaySelected
+        )
+
+        DetailEntryRow(day = today, detail = todayDetail, onClick = onOpenTodayDetail)
+
+        SettingsEntryRow(
+            config = config,
+            // 只在「说了要做但实际做不到」时提示，低频的「从未备份」不打扰
+            warning = (config.enabled && !hasNotificationPermission) ||
+                (config.healthConnectEnabled && isHealthConnectAvailable && !hasHealthPermissions),
+            onClick = onOpenSettings
+        )
+
+        Spacer(modifier = Modifier.height(80.dp))
+    }
+}
+
+private fun notificationPermissionGranted(context: Context): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
+/** 容量读数：千分位整数，和负荷页的读数习惯一致。 */
+private fun formatKg(value: Double): String = String.format(Locale.US, "%,.0f", value)
+
+/**
+ * 页首三块结论：本月打卡 / 连续 / 本月容量。
+ * 三块等宽 + 1dp 竖分隔线；数值等宽字体，副标题没有数据时整行省略（不显示 0）。
+ */
+@Composable
+private fun SummaryTriple(
+    checkInDays: Int,
+    checkInSub: String?,
+    streakDays: Int,
+    streakSub: String?,
+    volumeKg: Double,
+    volumeSub: String?
 ) {
     Row(
         modifier = Modifier
@@ -387,45 +486,307 @@ private fun HabitBanner(
             .clip(RoundedCornerShape(20.dp))
             .background(AppleGray6)
             .border(1.dp, AppleHairline, RoundedCornerShape(20.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        SummaryCell(
+            modifier = Modifier.weight(1f),
+            label = "本月打卡",
+            value = "$checkInDays",
+            unit = "天",
+            sub = checkInSub,
+            spoken = "本月打卡 $checkInDays 天" + (checkInSub?.let { "，$it" } ?: "")
+        )
+        SummaryDivider()
+        SummaryCell(
+            modifier = Modifier.weight(1f),
+            label = "连续",
+            value = "$streakDays",
+            unit = "天",
+            sub = streakSub,
+            spoken = "连续 $streakDays 天" + (streakSub?.let { "，$it" } ?: "")
+        )
+        SummaryDivider()
+        SummaryCell(
+            modifier = Modifier.weight(1f),
+            label = "本月容量",
+            value = formatKg(volumeKg),
+            unit = "kg",
+            sub = volumeSub,
+            spoken = "本月容量 ${formatKg(volumeKg)} 千克" + (volumeSub?.let { "，$it" } ?: "")
+        )
+    }
+}
+
+@Composable
+private fun RowScope.SummaryDivider() {
+    // 固定高度而不是 fillMaxHeight：不依赖 IntrinsicSize 的二次测量，行为可预期。
+    // 三块的文字基线都顶部对齐，只有这条线自己在垂直方向居中。
+    Box(
+        modifier = Modifier
+            .align(Alignment.CenterVertically)
+            .padding(horizontal = 10.dp)
+            .size(width = 1.dp, height = 40.dp)
+            .background(AppleHairline)
+    )
+}
+
+@Composable
+private fun SummaryCell(
+    label: String,
+    value: String,
+    unit: String,
+    sub: String?,
+    spoken: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.semantics(mergeDescendants = true) { contentDescription = spoken },
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            maxLines = 1
+        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                text = value,
+                // 等宽块里 32sp 只放得下 3 位数字（如「12」）；「24,860」这类必须逐级降档，
+                // 否则会被裁掉末位 —— 裁掉的正好是最重要的位数。
+                fontSize = when {
+                    value.length <= 3 -> 32.sp
+                    value.length == 4 -> 27.sp
+                    value.length == 5 -> 24.sp
+                    else -> 21.sp
+                },
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = (-1).sp,
+                color = AppleTextPrimary,
+                maxLines = 1
+            )
+            Text(
+                text = unit,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = AppleTextSecondary,
+                modifier = Modifier.padding(start = 3.dp, bottom = 3.dp)
+            )
+        }
+        if (sub != null) {
+            Text(
+                text = sub,
+                fontSize = 11.sp,
+                color = AppleTextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** 「查看 10月14日 明细 ›」：明细弹层不再默认展开，改成显式入口。 */
+@Composable
+private fun DetailEntryRow(day: LocalDate, detail: WorkoutDayDetail?, onClick: () -> Unit) {
+    val dateLabel = remember(day) { day.format(DateTimeFormatter.ofPattern("M月d日", Locale.CHINESE)) }
+    val info = if (detail == null) {
+        "还没记录"
+    } else {
+        "${detail.groups.size} 动作 · ${detail.groups.sumOf { it.sets.size }} 组"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppleGray6)
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = "查看 $dateLabel 明细，$info"
+            }
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "🔥 ", fontSize = 14.sp)
-                Text(
-                    text = "连续 $currentStreak 天",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (currentStreak > 0) AppleFitnessGreen else AppleTextTertiary
+        Text(text = "查看", fontSize = 13.sp, color = AppleTextPrimary)
+        Text(
+            text = dateLabel,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = FontFamily.Monospace,
+            color = AppleTextPrimary,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Text(text = "明细", fontSize = 13.sp, color = AppleTextPrimary)
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = info,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            color = AppleTextSecondary,
+            maxLines = 1
+        )
+        Icon(
+            imageVector = LucideIcons.ChevronRight,
+            contentDescription = null,
+            tint = AppleTextTertiary,
+            modifier = Modifier
+                .padding(start = 6.dp)
+                .size(16.dp)
+        )
+    }
+}
+
+/** 设置全部收成一行 56dp 入口；右侧摘要单行截断，读屏只念一句人话。 */
+@Composable
+private fun SettingsEntryRow(config: ReminderConfig, warning: Boolean, onClick: () -> Unit) {
+    val summary = buildString {
+        append("组间 ${config.restSeconds}s")
+        if (config.trainingDays.isNotEmpty()) append(" · ${config.trainingDays.size} 训练日")
+        if (config.healthConnectEnabled) append(" · 已连接 Health Connect")
+    }
+    val spoken = buildString {
+        append("训练设置与数据：组间休息 ${config.restSeconds} 秒")
+        if (config.enabled) append("，提醒 ${config.hour} 点")
+        if (config.healthConnectEnabled) append("，Health Connect 已开启")
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppleGray6)
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = spoken
+            }
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "训练设置与数据",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = AppleTextPrimary,
+            maxLines = 1
+        )
+        // weight 而不是 Spacer：摘要再长也只吃剩余宽度，绝不把 chevron 挤掉
+        Text(
+            text = summary,
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp)
+        )
+        if (warning) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(AppleCautionOrange)
+            )
+        }
+        Icon(
+            imageVector = LucideIcons.ChevronRight,
+            contentDescription = null,
+            tint = AppleTextTertiary,
+            modifier = Modifier
+                .padding(start = 6.dp)
+                .size(16.dp)
+        )
+    }
+}
+
+/** 二级页：训练设置与数据。四张卡原样搬过来，只负责返回与容量。 */
+@Composable
+private fun TrainingSettingsPage(
+    config: ReminderConfig,
+    hasHealthPermissions: Boolean,
+    isHealthConnectAvailable: Boolean,
+    onSetRestSeconds: (Int) -> Unit,
+    onToggleReminder: (Boolean) -> Unit,
+    onTimeChange: (Int, Int) -> Unit,
+    onToggleDay: (DayOfWeek) -> Unit,
+    onToggleHealthConnect: (Boolean) -> Unit,
+    onRequestHealthPermissions: () -> Unit,
+    onSync: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(AppleBlack)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "返回日历"
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = LucideIcons.ChevronRight,
+                    contentDescription = null,
+                    tint = AppleTextPrimary,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .rotate(180f)
                 )
             }
             Text(
-                text = if (longestStreak > 0) "最长 $longestStreak 天" else "还没有连续记录",
-                fontSize = 11.sp,
-                color = AppleTextSecondary,
-                modifier = Modifier.padding(top = 2.dp)
+                text = "训练设置与数据",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = AppleTextPrimary,
+                modifier = Modifier.padding(start = 4.dp)
             )
         }
 
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    if (remainingThisWeek > 0) AppleCautionOrange.copy(alpha = 0.14f)
-                    else AppleFitnessGreen.copy(alpha = 0.14f)
-                )
-                .padding(horizontal = 12.dp, vertical = 7.dp)
-        ) {
-            Text(
-                text = if (remainingThisWeek > 0) "本周还剩 $remainingThisWeek 练" else "本周计划已完成",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (remainingThisWeek > 0) AppleCautionOrange else AppleFitnessGreen
-            )
-        }
+        // 组间休息时长（打勾后自动开始）
+        RestDurationCard(restSeconds = config.restSeconds, onChange = onSetRestSeconds)
+
+        // M2：训练日提醒设置
+        ReminderSettingsCard(
+            config = config,
+            onToggleEnabled = onToggleReminder,
+            onTimeChange = onTimeChange,
+            onToggleDay = onToggleDay
+        )
+
+        // P1：Health Connect 自动同步设置
+        HealthConnectSettingsCard(
+            enabled = config.healthConnectEnabled,
+            hasPermissions = hasHealthPermissions,
+            isAvailable = isHealthConnectAvailable,
+            onToggle = onToggleHealthConnect,
+            onRequestPermissions = onRequestHealthPermissions,
+            onSync = onSync
+        )
+
+        // P0：数据备份与恢复设置
+        DataBackupSettingsCard(onExport = onExport, onImport = onImport)
+
+        Spacer(modifier = Modifier.height(80.dp))
     }
 }
 
@@ -459,7 +820,7 @@ private fun ReminderSettingsCard(
                 )
                 Text(
                     text = "实际触发时间允许 ±15 分钟（系统限制）",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     color = AppleTextTertiary
                 )
             }
@@ -530,7 +891,7 @@ private fun RestDurationCard(restSeconds: Int, onChange: (Int) -> Unit) {
             )
             Text(
                 text = "打勾后自动开始倒计时；大重量复合动作可调到 180s",
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 color = AppleTextTertiary
             )
         }
@@ -614,53 +975,63 @@ private val WEEK_LABELS = listOf(
 @Composable
 private fun TrainingCheckInCalendar(
     trainedDayTypes: Map<LocalDate, String>,
+    metricDays: Set<LocalDate>,
     onDaySelected: (LocalDate) -> Unit
 ) {
-    var monthState by remember { mutableStateOf(YearMonth.now()) }
-    val month = monthState
+    // 存成字符串而不是 YearMonth：rememberSaveable 只要可序列化就能跨「去设置页再回来」存活
+    val thisMonth = remember { YearMonth.now() }
+    var monthKey by rememberSaveable { mutableStateOf(thisMonth.toString()) }
+    val month = remember(monthKey) {
+        runCatching { YearMonth.parse(monthKey) }.getOrElse { thisMonth }
+    }
     val today = LocalDate.now()
 
-    // 周一为首列；末尾补 null 保证每行 7 格对齐
+    // 周一为首列；末尾补 null 保证每行 7 格对齐。非本月只留空位，不渲染数字
     val cells = remember(month) { monthGridCells(month) }
-    val monthTrainedCount = cells.count { it != null && trainedDayTypes.containsKey(it) }
+    val trainedThisMonth = remember(trainedDayTypes, month) {
+        trainedDayTypes.keys.any { YearMonth.from(it) == month }
+    }
 
+    // ⚠️ 卡片水平内边距 8 与网格/图例的水平内边距 8 是一对：
+    // 两者之和恒为 16，网格内宽才是 361-8-8-8-8 = 329 → 7 列每格 47dp。
+    // 只改任一边，格宽就变 49.3dp，七列全部要重算。上边距 8（不是 16）是有意的：
+    // 那 8dp 让给了底部余量，别当成笔误「修正」。
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(AppleGray6)
             .border(1.dp, AppleHairline, RoundedCornerShape(20.dp))
-            .padding(16.dp),
+            .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // 月份标题居中：两侧各 48dp 触控盒，等宽自动对称（点击挂在 48 的盒子上，不是 26 圆）
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            MonthNavButton(forward = false) { monthKey = month.minusMonths(1).toString() }
             Text(
-                text = "本月打卡 $monthTrainedCount 天",
-                fontSize = 13.sp,
+                text = "${month.year}年${month.monthValue}月",
+                fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = AppleTextPrimary
+                color = AppleTextPrimary,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MonthNavButton("‹") { monthState = month.minusMonths(1) }
-                Text(
-                    text = "${month.year}年${month.monthValue}月",
-                    fontSize = 12.sp,
-                    color = AppleTextSecondary,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-                MonthNavButton("›") { monthState = month.plusMonths(1) }
-            }
+            MonthNavButton(forward = true) { monthKey = month.plusMonths(1).toString() }
         }
 
-        Row(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+        ) {
             listOf("一", "二", "三", "四", "五", "六", "日").forEach {
                 Text(
                     text = it,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     color = AppleTextTertiary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f)
@@ -669,14 +1040,20 @@ private fun TrainingCheckInCalendar(
         }
 
         cells.chunked(7).forEach { week ->
-            Row(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+            ) {
                 week.forEach { day ->
                     if (day == null) {
-                        Spacer(modifier = Modifier.weight(1f))
+                        // 非本月：占位但不出数字、不进无障碍树、不可点
+                        Spacer(modifier = Modifier.weight(1f).height(48.dp))
                     } else {
                         DayCell(
                             day = day,
-                            typeLabel = trainedDayTypes[day],
+                            isTrained = trainedDayTypes.containsKey(day),
+                            hasMetric = metricDays.contains(day),
                             isToday = day == today,
                             onClick = { onDaySelected(day) },
                             modifier = Modifier.weight(1f)
@@ -685,65 +1062,192 @@ private fun TrainingCheckInCalendar(
                 }
             }
         }
+
+        if (!trainedThisMonth) {
+            Text(
+                text = "这个月还没有训练记录",
+                fontSize = 11.sp,
+                color = AppleTextSecondary,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+        }
+
+        // 图例行固定 48dp 高：「回今天」出现/消失时整卡不许跳
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .padding(horizontal = 8.dp)
+                .background(AppleHairline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .height(48.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.semantics(mergeDescendants = true) {
+                    contentDescription = "图例：绿色为已训练，蓝点为有体测"
+                },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(AppleFitnessGreen)
+                )
+                Text(
+                    text = "已训练",
+                    fontSize = 11.sp,
+                    color = AppleTextSecondary,
+                    modifier = Modifier.padding(start = 5.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(start = 14.dp)
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(AppleSystemBlue)
+                )
+                Text(
+                    text = "有体测",
+                    fontSize = 11.sp,
+                    color = AppleTextSecondary,
+                    modifier = Modifier.padding(start = 5.dp)
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            // 翻到别的月份后必须有回本月的路径；点击挂在 48dp 高的盒子上，不挂在 11sp 文字上
+            if (month != thisMonth) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .clickable { monthKey = thisMonth.toString() }
+                        .semantics {
+                            role = Role.Button
+                            contentDescription = "回到本月"
+                        }
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = "回今天", fontSize = 11.sp, color = AppleTextSecondary)
+                }
+            }
+        }
     }
 }
 
+/**
+ * 一天的格子：47×48 触控格 + 恒定 34dp 视觉槽位。
+ *
+ * 日历格是**导航入口**，不是开关：空白日也能点开（空态里可以直接补记体测），
+ * 所以这里没有 `clickable(enabled = ...)` —— 那是「只记了体测的日子点不开」的根因。
+ * 34dp 槽位在未训练日也照常渲染（透明占位），翻月时数字不会上下跳。
+ */
 @Composable
 private fun DayCell(
     day: LocalDate,
-    typeLabel: String?,
+    isTrained: Boolean,
+    hasMetric: Boolean,
     isToday: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val trained = typeLabel != null
-    Column(
+    val spoken = remember(day, isTrained, hasMetric, isToday) {
+        buildString {
+            if (isToday) append("今天，")
+            append("${day.monthValue}月${day.dayOfMonth}日，")
+            append(if (isTrained) "已训练" else "无训练")
+            append("，")
+            append(if (hasMetric) "有体测记录" else "无体测记录")
+        }
+    }
+    // 34dp 上的 14dp 圆角是 squircle，不是正圆
+    val shape = RoundedCornerShape(14.dp)
+    Box(
         modifier = modifier
-            .height(46.dp)
-            .clickable(enabled = trained) { onClick() },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .height(48.dp)
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = spoken
+            },
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(if (trained) AppleFitnessGreen else Color.Transparent)
-                .then(
-                    if (isToday && !trained) Modifier.border(1.dp, AppleFitnessGreen, CircleShape)
-                    else Modifier
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "${day.dayOfMonth}",
-                fontSize = 12.sp,
-                fontWeight = if (trained || isToday) FontWeight.Bold else FontWeight.Normal,
-                color = if (trained) Color.Black else if (isToday) AppleFitnessGreen else AppleTextSecondary
+        Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+            // 今天：34dp 槽位内画 1.5dp 绿环（不外扩，避免被卡片圆角裁掉）
+            if (isToday) {
+                Box(modifier = Modifier.matchParentSize().border(1.5.dp, AppleFitnessGreen, shape))
+            }
+            // 今天 + 已训练：绿底再往里收，让出「2dp 空气 + 1.5dp 环」的双层环
+            val innerInset = if (isToday && isTrained) 3.5.dp else 0.dp
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerInset)
+                    .clip(shape)
+                    .background(if (isTrained) AppleFitnessGreen else Color.Transparent),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${day.dayOfMonth}",
+                    fontSize = 13.sp,
+                    fontWeight = if (isTrained || isToday) FontWeight.Bold else FontWeight.Normal,
+                    fontFamily = FontFamily.Monospace,
+                    color = when {
+                        isTrained -> Color.Black
+                        isToday -> AppleFitnessGreen
+                        else -> AppleTextSecondary
+                    }
+                )
+            }
+        }
+        // 有体测：4dp 蓝点贴到 48dp 格底部内侧（y42–46），不用负 offset，避免被卡片 clip 裁掉。
+        // 只称了体重没训练的日子同样画点 —— 那是正常状态。
+        if (hasMetric) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 2.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(AppleSystemBlue)
+                    .border(0.5.dp, Color.Black.copy(alpha = 0.5f), CircleShape)
             )
         }
-        // 训练类型标签：推 / 拉 / 腿
-        Text(
-            text = typeLabel ?: "",
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = AppleFitnessGreen,
-            maxLines = 1
-        )
     }
 }
 
+/** 48×48 触控盒里放 26dp 视觉圆（箭头 14sp）；点击挂在 48 的盒子上。 */
 @Composable
-private fun MonthNavButton(label: String, onClick: () -> Unit) {
+private fun MonthNavButton(forward: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(24.dp)
-            .clip(CircleShape)
-            .background(AppleGray5)
-            .clickable { onClick() },
+            .size(48.dp)
+            .clip(RoundedCornerShape(29.dp))
+            .clickable(onClick = onClick)
+            .semantics {
+                role = Role.Button
+                contentDescription = if (forward) "下个月" else "上个月"
+            },
         contentAlignment = Alignment.Center
     ) {
-        Text(text = label, fontSize = 13.sp, color = AppleTextPrimary)
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(AppleGray5),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (forward) "›" else "‹",
+                fontSize = 14.sp,
+                color = AppleTextPrimary
+            )
+        }
     }
 }
 
@@ -753,6 +1257,7 @@ private fun DayDetailSheet(
     day: LocalDate,
     detail: WorkoutDayDetail?,
     metric: BodyMetricEntity?,
+    typeLabel: String?,
     onRecordMetric: () -> Unit,
     onShareToAi: () -> Unit,
     onDismiss: () -> Unit,
@@ -796,11 +1301,30 @@ private fun DayDetailSheet(
                         letterSpacing = 0.5.sp
                     )
                     Text(
-                        text = detail?.title ?: "加载中…",
+                        // 空白日也能点开（日历格是导航入口）：没有训练就说清楚，而不是假装还在加载。
+                        // 有训练记录但明细还没到时才显示「加载中…」。
+                        text = detail?.title ?: if (typeLabel != null) "加载中…" else "这天没有训练记录",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = AppleTextPrimary
                     )
+                    // 训练类型（推 / 拉 / 腿）从日历格里挪到这里：9sp 的字号在格内读不出来
+                    if (typeLabel != null) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(AppleGray5)
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = typeLabel,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = AppleFitnessGreen
+                            )
+                        }
+                    }
                 }
 
                 if (detail != null) {
@@ -857,7 +1381,7 @@ private fun DayDetailSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(text = "笔记", fontSize = 10.sp, color = AppleTextSecondary)
+                        Text(text = "笔记", fontSize = 11.sp, color = AppleTextSecondary)
                         Text(
                             text = detail.notes,
                             fontSize = 12.sp,
@@ -923,17 +1447,27 @@ private fun DayDetailSheet(
                 )
             }
 
-            // 历史纠正入口：误记（如 60kg 打成 600kg）此前完全无法修正，会永久污染 PR 与容量曲线
+            // 历史纠正入口：误记（如 60kg 打成 600kg）此前完全无法修正，会永久污染 PR 与容量曲线。
+            // 与上面的「记一次体测」拉开 24dp 并加一条分割线：两者相邻时极易误触。
             if (detail != null) {
-                TextButton(
-                    onClick = onDelete,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "删除这天的训练记录",
-                        fontSize = 12.sp,
-                        color = Color(0xFFFF453A)
+                Column {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .height(0.5.dp)
+                            .background(AppleHairline)
                     )
+                    TextButton(
+                        onClick = onDelete,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "删除这天的训练记录",
+                            fontSize = 12.sp,
+                            color = Color(0xFFFF453A)
+                        )
+                    }
                 }
             }
         }
@@ -943,7 +1477,7 @@ private fun DayDetailSheet(
 @Composable
 private fun DetailMetric(label: String, value: String, valueColor: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, fontSize = 10.sp, color = AppleTextSecondary)
+        Text(text = label, fontSize = 11.sp, color = AppleTextSecondary)
         Text(
             text = value,
             fontSize = 15.sp,
@@ -1079,9 +1613,9 @@ private fun HealthConnectSettingsCard(
         ) {
             Text(
                 text = "🔒 本地安全：数据仅保存在本机系统 Health Connect 与本地数据库中，不经过任何自建云端或第三方服务器，100% 掌握在您的设备中。",
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 color = AppleTextTertiary,
-                lineHeight = 15.sp
+                lineHeight = 16.sp
             )
         }
     }

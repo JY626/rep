@@ -1,5 +1,7 @@
 package com.baoji.fitness.ui.library
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +17,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -43,17 +48,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.baoji.fitness.core.database.entity.BodyMetricEntity
@@ -65,6 +77,7 @@ import com.baoji.fitness.core.theme.AppleGray4
 import com.baoji.fitness.core.theme.AppleGray5
 import com.baoji.fitness.core.theme.AppleGray6
 import com.baoji.fitness.core.theme.AppleHairline
+import com.baoji.fitness.core.theme.AppleStrokeStrong
 import com.baoji.fitness.core.theme.AppleTextPrimary
 import com.baoji.fitness.core.theme.AppleTextSecondary
 import com.baoji.fitness.core.theme.AppleTextTertiary
@@ -84,6 +97,11 @@ import kotlinx.coroutines.launch
 internal fun formatMetric(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
 
+/**
+ * 动作库。B 版：去卡片化 —— 列表就是列表（56dp 单行 + 发丝分隔线），
+ * 搜索与肌群 chips 常驻并同时生效（AND），顶部先给「多少动作 / 多少有记录」这句结论。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LibraryScreen(
     repository: WorkoutRepository,
@@ -93,27 +111,48 @@ fun LibraryScreen(
     val exercises by repository.getAllExercises().collectAsState(initial = emptyList())
 
     var selectedMuscle by remember { mutableStateOf("全部") }
+    var query by remember { mutableStateOf("") }
     var showCreateSheet by remember { mutableStateOf(false) }
     var selectedExerciseForDetail by remember { mutableStateOf<ExerciseEntity?>(null) }
 
-    val filtered = if (selectedMuscle == "全部") {
+    val trimmedQuery = query.trim()
+
+    /**
+     * 搜索（名称/肌群/器械，忽略大小写）与肌群 chips 是 AND 关系；
+     * chips 之间仍单选。排序按 PR 从高到低 —— 与列表头那句「按 PR 从高到低」一致，
+     * 没记录的一律沉底（0 不算纪录，不参与比较）。
+     */
+    val filtered = remember(exercises, selectedMuscle, trimmedQuery) {
         exercises
-    } else {
-        exercises.filter { it.targetMuscle == selectedMuscle }
+            .filter { e ->
+                val muscleOk = selectedMuscle == "全部" || e.targetMuscle == selectedMuscle
+                val queryOk = trimmedQuery.isEmpty() ||
+                    e.name.contains(trimmedQuery, ignoreCase = true) ||
+                    e.targetMuscle.contains(trimmedQuery, ignoreCase = true) ||
+                    e.equipment.contains(trimmedQuery, ignoreCase = true)
+                muscleOk && queryOk
+            }
+            .sortedByDescending { it.personalRecordWeight }
     }
+
+    val hasAnyExercise = exercises.isNotEmpty()
+    val recordedCount = remember(exercises) { exercises.count { it.personalRecordWeight > 0 } }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .background(AppleBlack)
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            // 键盘弹出时列表随之上移，否则筛选后的结果会被输入框挡住
+            .imePadding()
+            .padding(horizontal = 16.dp)
     ) {
-        // 1. Header —— 右上角「新建动作」
+        // 1. 标题 + 右上角「新建动作」胶囊（不用 FAB：会被 Tab 栏顶起来遮住列表末行）
         item {
             Spacer(modifier = Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -127,100 +166,150 @@ fun LibraryScreen(
                     )
                     Text(
                         text = "动作库",
-                        fontSize = 24.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = AppleTextPrimary,
                         letterSpacing = (-0.5).sp
                     )
                 }
-                Box(
+                CreatePill(onClick = { showCreateSheet = true })
+            }
+        }
+
+        if (!hasAnyExercise) {
+            // 一个动作都没有（新装）：搜索框与 chips 都是死控件，直接藏起来只留建动作
+            item { AllEmptyState(onCreate = { showCreateSheet = true }) }
+        } else {
+            // 2. 结论行：32 个动作 · 12 个有记录
+            item {
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(AppleGray6)
-                        .border(1.dp, AppleHairline, RoundedCornerShape(14.dp))
-                        .clickable { showCreateSheet = true }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = LucideIcons.Plus,
-                            contentDescription = null,
-                            tint = AppleFitnessGreen,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "新建动作",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AppleFitnessGreen
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2. Muscle Filter
-        item {
-            val muscles = listOf("全部") + MuscleClassifier.PRIMARY_MUSCLES
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                muscles.forEach { muscle ->
-                    val isSelected = (muscle == selectedMuscle)
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) Color.White else AppleGray6)
-                            .clickable { selectedMuscle = muscle }
-                            .padding(horizontal = 14.dp, vertical = 7.dp)
-                    ) {
-                        Text(
-                            text = muscle,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) Color.Black else AppleTextSecondary
-                        )
-                    }
-                }
-            }
-        }
-
-        // 3. Exercise List Card Container
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(AppleGray6)
-                    .border(1.dp, AppleHairline, RoundedCornerShape(24.dp))
-            ) {
-                if (filtered.isEmpty()) {
                     Text(
-                        text = "这个部位还没有动作，点右上角「新建动作」添加",
-                        fontSize = 12.sp,
-                        color = AppleTextTertiary,
-                        modifier = Modifier.padding(16.dp)
+                        text = exercises.size.toString(),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = (-0.4).sp,
+                        color = AppleTextPrimary
+                    )
+                    Text(
+                        text = " 个动作 · ",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary
+                    )
+                    Text(
+                        text = recordedCount.toString(),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = (-0.4).sp,
+                        color = AppleTextPrimary
+                    )
+                    Text(
+                        text = " 个有记录",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary
                     )
                 }
-                filtered.forEachIndexed { index, exercise ->
+            }
+
+            // 3. 常驻搜索框
+            item {
+                SearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+
+            // 4. 肌群 chips（单选，与搜索 AND 交集）
+            item {
+                val muscles = listOf("全部") + MuscleClassifier.PRIMARY_MUSCLES
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .selectableGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    muscles.forEach { muscle ->
+                        val isSelected = (muscle == selectedMuscle)
+                        Box(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isSelected) AppleFitnessGreen else AppleGray5)
+                                .selectable(
+                                    selected = isSelected,
+                                    role = Role.RadioButton,
+                                    onClick = { selectedMuscle = muscle }
+                                )
+                                .padding(horizontal = 14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = muscle,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.Black else AppleTextPrimary,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 5. 吸顶列表头：滚多远都知道这堆是什么、按什么排
+            stickyHeader {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(AppleBlack)
+                        .padding(top = 12.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (selectedMuscle == "全部") "全部动作" else "「$selectedMuscle」动作",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AppleTextSecondary
+                    )
+                    Text(
+                        text = "按 PR 从高到低",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary
+                    )
+                }
+            }
+
+            if (filtered.isEmpty()) {
+                item {
+                    EmptyResultState(
+                        query = trimmedQuery,
+                        muscle = selectedMuscle,
+                        onClear = {
+                            query = ""
+                            selectedMuscle = "全部"
+                        }
+                    )
+                }
+            } else {
+                itemsIndexed(items = filtered, key = { _, e -> e.id }) { index, exercise ->
                     ExerciseListItem(
                         exercise = exercise,
+                        showDivider = index < filtered.lastIndex,
                         onClick = { selectedExerciseForDetail = exercise }
                     )
-                    if (index < filtered.size - 1) {
-                        HorizontalDivider(color = AppleHairline, thickness = 0.5.dp)
-                    }
                 }
             }
         }
 
-        item { Spacer(modifier = Modifier.height(80.dp)) }
+        item { Spacer(modifier = Modifier.height(28.dp)) }
     }
 
     if (showCreateSheet) {
@@ -244,64 +333,324 @@ fun LibraryScreen(
     }
 }
 
+/** 右上角「＋ 新建动作」：30dp 胶囊，绿底黑字。 */
 @Composable
-private fun ExerciseListItem(
-    exercise: ExerciseEntity,
-    onClick: () -> Unit
-) {
-    Row(
+private fun CreatePill(onClick: () -> Unit) {
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .height(30.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(AppleFitnessGreen)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Column {
-            Text(
-                text = exercise.name,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AppleTextPrimary
-            )
-            Text(
-                text = "${exercise.targetMuscle} · ${exercise.equipment}",
-                fontSize = 11.sp,
-                color = AppleTextSecondary,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-        }
-
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (exercise.personalRecordWeight > 0) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(AppleFitnessGreen.copy(alpha = 0.12f))
-                        .padding(horizontal = 7.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = "PR ${formatMetric(exercise.personalRecordWeight)} kg",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AppleFitnessGreen,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
             Icon(
-                imageVector = LucideIcons.ChevronRight,
+                imageVector = LucideIcons.Plus,
                 contentDescription = null,
-                tint = AppleTextSecondary,
-                modifier = Modifier.size(16.dp)
+                tint = Color.Black,
+                modifier = Modifier.size(12.dp)
+            )
+            Text(
+                text = "新建动作",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.Black
             )
         }
     }
 }
 
+/**
+ * 常驻搜索框：40dp 高、AppleGray6 底 + 35% 白描边。
+ * 纯黑上 AppleGray6 的对比只有 1.85:1，不描边根本看不出输入区边界。
+ */
+@Composable
+private fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppleGray6)
+            .border(1.dp, AppleStrokeStrong, RoundedCornerShape(12.dp))
+            .semantics { contentDescription = "搜索动作，可输入动作名或器械" }
+            .padding(start = 12.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        SearchGlyph(modifier = Modifier.size(16.dp))
+
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            if (query.isEmpty()) {
+                Text(
+                    text = "搜索动作 / 肌群 / 器械",
+                    fontSize = 13.sp,
+                    color = AppleTextSecondary,
+                    maxLines = 1
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = TextStyle(fontSize = 13.sp, color = AppleTextPrimary),
+                cursorBrush = SolidColor(AppleFitnessGreen),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Search
+                ),
+                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() })
+            )
+        }
+
+        if (query.isNotEmpty()) {
+            // 24dp 视觉 / 40dp 热区
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable { onQueryChange("") }
+                    .semantics { contentDescription = "清除搜索" },
+                contentAlignment = Alignment.Center
+            ) {
+                ClearGlyph(modifier = Modifier.size(24.dp))
+            }
+        }
+    }
+}
+
+/** 放大镜：不引图标库，Canvas 手画（与项目内其余图标风格一致）。 */
+@Composable
+private fun SearchGlyph(
+    modifier: Modifier = Modifier,
+    color: Color = AppleTextSecondary
+) {
+    Canvas(modifier = modifier) {
+        val stroke = size.minDimension * 0.13f
+        val r = size.minDimension * 0.32f
+        val center = Offset(size.width * 0.42f, size.height * 0.42f)
+        drawCircle(color = color, radius = r, center = center, style = Stroke(width = stroke))
+        drawLine(
+            color = color,
+            start = Offset(center.x + r * 0.75f, center.y + r * 0.75f),
+            end = Offset(size.width * 0.94f, size.height * 0.94f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+/** 清除按钮的 ×：AppleGray4 圆底 + 两条短线。 */
+@Composable
+private fun ClearGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val d = size.minDimension
+        drawCircle(color = AppleGray4, radius = d / 2f, center = Offset(d / 2f, d / 2f))
+        val inset = d * 0.32f
+        val stroke = d * 0.09f
+        drawLine(
+            color = AppleTextPrimary,
+            start = Offset(inset, inset),
+            end = Offset(d - inset, d - inset),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = AppleTextPrimary,
+            start = Offset(d - inset, inset),
+            end = Offset(inset, d - inset),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+/**
+ * 列表项：56dp 紧凑单行，行与行之间只有发丝线。不加卡片底 / 圆角 / 阴影 ——
+ * 一张卡包一行的写法在 30+ 动作时会变成一堵墙。
+ */
+@Composable
+private fun ExerciseListItem(
+    exercise: ExerciseEntity,
+    showDivider: Boolean,
+    onClick: () -> Unit
+) {
+    val pr = exercise.personalRecordWeight
+    val description = buildString {
+        append(exercise.name)
+        append("，")
+        append(exercise.targetMuscle)
+        append("，")
+        append(exercise.equipment)
+        if (pr > 0) append("，个人纪录 ${formatMetric(pr)} 公斤")
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .clickable(onClick = onClick)
+                .semantics(mergeDescendants = true) { contentDescription = description },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = exercise.name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppleTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = buildString {
+                        append(exercise.targetMuscle)
+                        append(" · ")
+                        append(exercise.equipment)
+                        // 没记录写进副行：PR 列是纯数字列，塞文字会让右边缘与其它行对不齐
+                        if (pr <= 0) append(" · 未记录")
+                    },
+                    fontSize = 12.sp,
+                    color = AppleTextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+
+            // 纯数字列：13sp 等宽绿字，不加底色 —— 每行一个绿 pill 会变成一片亮点，反而看不出重点
+            if (pr > 0) {
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    modifier = Modifier.padding(start = 12.dp)
+                ) {
+                    Text(
+                        text = formatMetric(pr),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = (-0.3).sp,
+                        color = AppleFitnessGreen,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = " kg",
+                        fontSize = 11.sp,
+                        color = AppleTextSecondary,
+                        modifier = Modifier.padding(bottom = 1.dp)
+                    )
+                }
+            }
+        }
+        // 最后一行不画线（与列表底部的留白相接）
+        if (showDivider) {
+            HorizontalDivider(color = AppleHairline.copy(alpha = 0.6f), thickness = 0.5.dp)
+        }
+    }
+}
+
+/** 搜索/筛选无结果：说清「哪个词、哪个部位没命中」，并给一条退路。 */
+@Composable
+private fun EmptyResultState(
+    query: String,
+    muscle: String,
+    onClear: () -> Unit
+) {
+    val message = when {
+        query.isNotEmpty() && muscle != "全部" -> "「$muscle」里没有匹配「$query」的动作"
+        query.isNotEmpty() -> "没有匹配「$query」的动作"
+        muscle != "全部" -> "「$muscle」里还没有动作"
+        else -> "还没有动作"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = message,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = AppleTextPrimary,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = "换个词试试，或新建一个",
+            fontSize = 11.sp,
+            color = AppleTextSecondary,
+            textAlign = TextAlign.Center
+        )
+        Box(
+            modifier = Modifier
+                .height(40.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .clickable(onClick = onClear)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "清除筛选",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppleFitnessGreen
+            )
+        }
+    }
+}
+
+/** 一个动作都没有（新装）：只留一句 + 一个 44dp 主按钮，别摆死控件。 */
+@Composable
+private fun AllEmptyState(onCreate: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(
+            text = "还没有动作，先建一个",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = AppleTextPrimary
+        )
+        Box(
+            modifier = Modifier
+                .height(44.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(AppleFitnessGreen)
+                .clickable(onClick = onCreate)
+                .padding(horizontal = 22.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "新建动作",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black
+            )
+        }
+    }
+}
 
 /**
  * M3b 录入弹层。预填最新一条记录（无记录时给中性基准），
