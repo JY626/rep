@@ -18,6 +18,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -25,6 +33,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,10 +44,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.baoji.fitness.core.database.entity.BodyMetricEntity
@@ -58,12 +73,8 @@ import com.baoji.fitness.data.repository.WorkoutRepository
 import com.baoji.fitness.domain.algorithm.MuscleClassifier
 import com.baoji.fitness.domain.model.PersonalRecordCalculator
 import com.baoji.fitness.ui.components.ChartPoint
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -314,10 +325,6 @@ internal fun BodyMetricSheet(
     var waist by remember { mutableStateOf(latest?.waistCm ?: 80.0) }
     var arm by remember { mutableStateOf(latest?.armCm ?: 35.0) }
 
-    /** 单位转换：厘米 ↔ 斤不做，全部按 kg / cm / %。 */
-    fun step(current: Double, delta: Double): Double =
-        ((current + delta).coerceAtLeast(0.0) * 10).toInt() / 10.0
-
     val dateFormat = remember { DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINESE) }
 
     ModalBottomSheet(
@@ -337,9 +344,11 @@ internal fun BodyMetricSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Column {
                 Text(
@@ -355,66 +364,44 @@ internal fun BodyMetricSheet(
                 )
             }
 
-            MetricStepper(
+            MetricInputField(
                 label = "体重",
                 unit = "kg",
                 value = weight,
-                deltas = listOf(-1.0, -0.5, 0.5, 1.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    weight = step(weight, it)
-                }
+                onValueChange = { weight = it }
             )
-            MetricStepper(
+            MetricInputField(
                 label = "体脂率",
                 unit = "%",
                 value = fat,
-                deltas = listOf(-1.0, -0.5, 0.5, 1.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    fat = step(fat, it)
-                }
+                onValueChange = { fat = it }
             )
-            MetricStepper(
+            MetricInputField(
                 label = "身高",
                 unit = "cm",
                 value = height,
-                deltas = listOf(-1.0, -0.5, 0.5, 1.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    height = step(height, it)
-                }
+                onValueChange = { height = it }
             )
-            MetricStepper(
+            MetricInputField(
                 label = "胸围",
                 unit = "cm",
                 value = chest,
-                deltas = listOf(-2.0, -1.0, 1.0, 2.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    chest = step(chest, it)
-                }
+                onValueChange = { chest = it }
             )
-            MetricStepper(
+            MetricInputField(
                 label = "腰围",
                 unit = "cm",
                 value = waist,
-                deltas = listOf(-2.0, -1.0, 1.0, 2.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    waist = step(waist, it)
-                }
+                onValueChange = { waist = it }
             )
-            MetricStepper(
+            MetricInputField(
                 label = "臂围",
                 unit = "cm",
                 value = arm,
-                deltas = listOf(-2.0, -1.0, 1.0, 2.0),
-                onDelta = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    arm = step(arm, it)
-                }
+                onValueChange = { arm = it }
             )
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             Box(
                 modifier = Modifier
@@ -440,57 +427,89 @@ internal fun BodyMetricSheet(
 }
 
 @Composable
-private fun MetricStepper(
+private fun MetricInputField(
     label: String,
     unit: String,
     value: Double,
-    deltas: List<Double>,
-    onDelta: (Double) -> Unit
+    onValueChange: (Double) -> Unit
 ) {
-    Column(
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var text by remember { mutableStateOf(formatMetric(value)) }
+
+    LaunchedEffect(value) {
+        if (text.toDoubleOrNull() != value) {
+            text = formatMetric(value)
+        }
+    }
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(AppleGray5)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = AppleTextPrimary
+        )
+
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(AppleGray6)
+                .border(0.5.dp, AppleHairline, RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(text = label, fontSize = 12.sp, color = AppleTextSecondary)
-            Text(
-                text = "${formatMetric(value)} $unit",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = AppleTextPrimary
+            BasicTextField(
+                value = text,
+                onValueChange = { newText ->
+                    if (newText.isEmpty() || newText.matches(Regex("""^\d{0,4}(\.\d{0,1})?$"""))) {
+                        text = newText
+                        val parsed = newText.toDoubleOrNull()
+                        if (parsed != null && parsed >= 0.0) {
+                            onValueChange(parsed)
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .width(IntrinsicSize.Min)
+                    .widthIn(min = 44.dp),
+                textStyle = TextStyle(
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = AppleTextPrimary,
+                    textAlign = TextAlign.End
+                ),
+                cursorBrush = SolidColor(AppleFitnessGreen),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        keyboardController?.hide()
+                        if (text.isBlank() || text.toDoubleOrNull() == null) {
+                            text = formatMetric(value)
+                        }
+                    }
+                )
             )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            deltas.forEach { delta ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AppleGray6)
-                        .clickable { onDelta(delta) }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (delta > 0) "+${formatMetric(delta)}" else formatMetric(delta),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AppleTextPrimary
-                    )
-                }
-            }
+
+            Text(
+                text = unit,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppleTextTertiary
+            )
         }
     }
 }

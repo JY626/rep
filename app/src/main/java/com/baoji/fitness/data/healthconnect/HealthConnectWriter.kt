@@ -1,6 +1,7 @@
 package com.baoji.fitness.data.healthconnect
 
 import android.content.Context
+import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.BodyFatRecord
@@ -63,13 +64,13 @@ object HealthConnectWriter {
         }
     }
 
-    /** 检查是否已获得全部权限。 */
+    /** 检查是否已获得全部权限（读+写）。 */
     suspend fun hasPermissions(context: Context): Boolean {
         if (!isAvailable(context)) return false
         return try {
             val client = HealthConnectClient.getOrCreate(context)
             val granted = client.permissionController.getGrantedPermissions()
-            granted.containsAll(WRITE_PERMISSIONS)
+            granted.containsAll(PERMISSIONS)
         } catch (_: Exception) {
             false
         }
@@ -107,6 +108,15 @@ object HealthConnectWriter {
      * @param sets 会话的所有组
      * @param exercises 动作库信息（用于解析动作名及器械）
      */
+    private const val TAG = "HealthConnectWriter"
+
+    /**
+     * 写入训练会话记录。
+     *
+     * @param session 会话实体
+     * @param sets 会话的所有组
+     * @param exercises 动作库信息（用于解析动作名及器械）
+     */
     suspend fun writeWorkout(
         context: Context,
         session: WorkoutSessionEntity,
@@ -118,7 +128,10 @@ object HealthConnectWriter {
         val client = HealthConnectClient.getOrCreate(context)
         val granted = client.permissionController.getGrantedPermissions()
         val permExercise = HealthPermission.getWritePermission(ExerciseSessionRecord::class)
-        if (!granted.contains(permExercise)) return Result.success(Unit)
+        if (!granted.contains(permExercise)) {
+            Log.w(TAG, "未获得 Health Connect 写入训练权限 (WRITE_EXERCISE)，跳过训练归档写入")
+            return Result.success(Unit)
+        }
 
         // 口径红线：严格排除热身组，只保留完成组
         val effectiveSets = sets.filter { it.isCompleted && it.setType != "WARMUP" }
@@ -126,7 +139,11 @@ object HealthConnectWriter {
 
         val startTime = Instant.ofEpochMilli(session.startTime)
         val lastCompleted = effectiveSets.mapNotNull { it.completedAt }.maxOrNull()
-        val endEpoch = lastCompleted ?: session.endTime ?: (session.startTime + 60_000L)
+        val endEpoch = maxOf(
+            lastCompleted ?: 0L,
+            session.endTime ?: 0L,
+            session.startTime + 60_000L
+        )
         val endTime = if (endEpoch > session.startTime) {
             Instant.ofEpochMilli(endEpoch)
         } else {
@@ -137,17 +154,42 @@ object HealthConnectWriter {
         val totalVolumeKg = effectiveSets.sumOf { it.weightKg * it.reps }
         val exerciseMap = exercises.associateBy { it.id }
 
-        val segments = effectiveSets.mapNotNull { set ->
-            val completedAt = set.completedAt ?: return@mapNotNull null
-            val segEnd = Instant.ofEpochMilli(completedAt)
-            val segStart = segEnd.minusSeconds(30)
-            val exName = exerciseMap[set.exerciseId]?.name.orEmpty()
-            ExerciseSegment(
-                startTime = segStart,
-                endTime = segEnd,
-                segmentType = mapSegmentType(exName),
-                repetitions = set.reps.coerceAtLeast(1)
-            )
+        // 安全构建 segments：必须按时间升序排列，且任意相邻两段绝对不可重叠，且必须在 [startTime, endTime] 范围内
+        val sortedSets = effectiveSets.filter { it.completedAt != null }
+            .sortedBy { it.completedAt }
+
+        val safeSegments = mutableListOf<ExerciseSegment>()
+        var lastSegEnd = startTime
+
+        for (set in sortedSets) {
+            val completedAt = set.completedAt ?: continue
+            val segEndInstant = Instant.ofEpochMilli(completedAt)
+            // 约束在 (startTime, endTime] 范围内
+            val boundedEnd = if (segEndInstant.isAfter(endTime)) endTime else segEndInstant
+            if (!boundedEnd.isAfter(startTime)) continue
+
+            // 单组默认分配 30 秒，但绝不能早于上一组的结束时间，也不能早于整场训练开始时间
+            var segStart = boundedEnd.minusSeconds(30)
+            if (segStart.isBefore(lastSegEnd)) {
+                segStart = lastSegEnd
+            }
+            if (segStart.isBefore(startTime)) {
+                segStart = startTime
+            }
+
+            // 必须严格满足 segStart < boundedEnd
+            if (segStart.isBefore(boundedEnd)) {
+                val exName = exerciseMap[set.exerciseId]?.name.orEmpty()
+                safeSegments.add(
+                    ExerciseSegment(
+                        startTime = segStart,
+                        endTime = boundedEnd,
+                        segmentType = mapSegmentType(exName),
+                        repetitions = set.reps.coerceAtLeast(1)
+                    )
+                )
+                lastSegEnd = boundedEnd
+            }
         }
 
         val notesText = buildString {
@@ -157,22 +199,47 @@ object HealthConnectWriter {
             }
         }
 
-        val record = ExerciseSessionRecord(
-            startTime = startTime,
-            startZoneOffset = zoneOffset,
-            endTime = endTime,
-            endZoneOffset = zoneOffset,
-            exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING,
-            title = session.title.ifBlank { "力量训练" },
-            notes = notesText,
-            metadata = Metadata(
-                clientRecordId = "baoji:session:${session.id}",
-                recordingMethod = Metadata.RECORDING_METHOD_ACTIVELY_RECORDED
-            ),
-            segments = segments
-        )
+        val version = maxOf(1L, session.endTime ?: System.currentTimeMillis())
+
+        // 双重保障：优先尝试安全 segments，若底层抛出异常则无缝降级为无 segments 写入（确保整场记录绝对不丢失）
+        val record = try {
+            ExerciseSessionRecord(
+                startTime = startTime,
+                startZoneOffset = zoneOffset,
+                endTime = endTime,
+                endZoneOffset = zoneOffset,
+                exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING,
+                title = session.title.ifBlank { "力量训练" },
+                notes = notesText,
+                metadata = Metadata(
+                    clientRecordId = "baoji:session:${session.id}",
+                    clientRecordVersion = version,
+                    recordingMethod = Metadata.RECORDING_METHOD_ACTIVELY_RECORDED
+                ),
+                segments = safeSegments
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "构造带 segments 的 ExerciseSessionRecord 异常，降级为无 segments 写入: ${e.message}")
+            ExerciseSessionRecord(
+                startTime = startTime,
+                startZoneOffset = zoneOffset,
+                endTime = endTime,
+                endZoneOffset = zoneOffset,
+                exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING,
+                title = session.title.ifBlank { "力量训练" },
+                notes = notesText,
+                metadata = Metadata(
+                    clientRecordId = "baoji:session:${session.id}",
+                    clientRecordVersion = version,
+                    recordingMethod = Metadata.RECORDING_METHOD_ACTIVELY_RECORDED
+                ),
+                segments = emptyList()
+            )
+        }
 
         insertOrUpdate(client, listOf(record))
+    }.onFailure { e ->
+        Log.e(TAG, "写入 Health Connect 失败", e)
     }
 
     /**
@@ -198,6 +265,7 @@ object HealthConnectWriter {
         val zoneOffset = zonedDateTime.offset
 
         val records = mutableListOf<Record>()
+        val version = maxOf(1L, metric.date)
 
         val permWeight = HealthPermission.getWritePermission(WeightRecord::class)
         if (granted.contains(permWeight) && metric.weightKg != null && metric.weightKg > 0.0) {
@@ -208,6 +276,7 @@ object HealthConnectWriter {
                     weight = Mass.kilograms(metric.weightKg),
                     metadata = Metadata(
                         clientRecordId = "baoji:weight:$localDate",
+                        clientRecordVersion = version,
                         recordingMethod = Metadata.RECORDING_METHOD_MANUAL_ENTRY
                     )
                 )
@@ -223,6 +292,7 @@ object HealthConnectWriter {
                     percentage = Percentage(metric.bodyFatPct),
                     metadata = Metadata(
                         clientRecordId = "baoji:bodyfat:$localDate",
+                        clientRecordVersion = version,
                         recordingMethod = Metadata.RECORDING_METHOD_MANUAL_ENTRY
                     )
                 )
@@ -232,19 +302,23 @@ object HealthConnectWriter {
         if (records.isNotEmpty()) {
             insertOrUpdate(client, records)
         }
+    }.onFailure { e ->
+        Log.e(TAG, "写入身体指标至 Health Connect 失败", e)
     }
 
     /**
-     * 幂等写入辅助方法：优先 insert，若已有 clientRecordId 则降级 update。
+     * 幂等写入辅助方法：通过带有递增 clientRecordVersion 的 insertRecords 实现官方标准 Upsert。
      */
     private suspend fun insertOrUpdate(client: HealthConnectClient, records: List<Record>) {
         try {
             client.insertRecords(records)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "insertRecords 遇到异常，尝试 updateRecords: ${e.message}")
             try {
                 client.updateRecords(records)
-            } catch (_: Exception) {
-                // 忽略非致命写入异常，保持主流程畅通
+            } catch (e2: Exception) {
+                Log.e(TAG, "updateRecords 亦失败: ${e2.message}", e2)
+                throw e2
             }
         }
     }
