@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>方向 B · 仪表盘 DASHBOARD — Rep 视觉方向</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:#08090a}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  color:#EDEDEF;-webkit-font-smoothing:antialiased;padding:34px 20px 70px;
+}
+.mono{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+
+.wrap{max-width:880px;margin:0 auto}
+.eyebrow{font-size:10px;letter-spacing:2.4px;color:#5B5C63;font-weight:600;text-transform:uppercase}
+h1{font-size:21px;font-weight:700;letter-spacing:-.2px;margin-top:7px}
+h1 s{text-decoration:none;color:#6E6E75;font-weight:500}
+.claim{display:flex;gap:10px;margin-top:14px;font-size:13px;line-height:1.55;color:#9EA0A8;max-width:620px}
+.claim::before{content:"";flex:0 0 2px;background:#2CD9A0;border-radius:2px}
+.tokens{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}
+.chip{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border-radius:7px;
+  background:#111316;border:1px solid rgba(255,255,255,.06);font-size:11px;color:#B9BAC1;letter-spacing:.2px}
+.chip b{color:#fff;font-weight:600}
+.chip .sw{width:11px;height:11px;border-radius:3px;display:block;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}
+
+.stage{display:flex;flex-wrap:wrap;gap:26px;justify-content:center;margin-top:34px}
+:root{--s:1}
+.pf{margin:0}
+.pf>figcaption{font-size:10px;letter-spacing:1.6px;color:#5B5C63;font-weight:600;margin-bottom:11px;text-align:center}
+.scaler{width:calc(393px * var(--s));height:calc(852px * var(--s))}
+.phone{
+  position:relative;width:393px;height:852px;border-radius:36px;overflow:hidden;background:#000;
+  display:flex;flex-direction:column;transform-origin:top left;transform:scale(var(--s));
+  box-shadow:0 0 0 5px #15161a,0 0 0 6px rgba(255,255,255,.10),0 26px 60px rgba(0,0,0,.6);
+}
+@media(max-width:920px){:root{--s:.92}}
+@media(max-width:770px){:root{--s:.95}}
+@media(max-width:470px){:root{--s:.84}}
+@media(max-width:390px){:root{--s:.76}}
+
+.sbar{flex:0 0 48px;position:relative;display:flex;align-items:center;justify-content:space-between;padding:0 22px 0 26px}
+.tm{font-size:14px;font-weight:600;letter-spacing:.2px}
+.isl{position:absolute;left:50%;top:8px;transform:translateX(-50%);width:94px;height:25px;border-radius:13px;background:#0b0b0c;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+.sico{display:flex;align-items:center;gap:6px}
+.batt{width:22px;height:11px;border:1px solid rgba(255,255,255,.44);border-radius:3px;padding:1.5px;display:block}
+.batt i{display:block;height:100%;width:72%;background:#fff;border-radius:1px}
+
+.nav{flex:0 0 84px;padding-bottom:24px;display:flex;background:#0A0C0F;border-top:1px solid rgba(255,255,255,.06)}
+.nav .t{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  font-size:10px;letter-spacing:.2px;color:#63646A}
+.nav .t.on{color:#2CD9A0}
+.nav .t i{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:0;margin-top:1px}
+.nav .t.on i{opacity:1}
+.nav svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+.scr{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;padding:0 16px 6px;position:relative}
+.scr::after{content:"";position:absolute;left:0;right:0;bottom:0;height:72px;z-index:1;
+  background:linear-gradient(to top,#000 44%,rgba(0,0,0,0));pointer-events:none}
+
+/* ---------- 通用卡片 ---------- */
+.card{background:#14161A;border-radius:20px;padding:14px}
+.card+.card{margin-top:9px}
+
+/* ---------- B 训练页 ---------- */
+.bhead{display:flex;align-items:center;justify-content:space-between;padding:2px 0 10px}
+.bdate{font-size:11px;letter-spacing:.9px;color:#63646A;font-weight:600}
+.btitle{font-size:18px;font-weight:700;letter-spacing:-.4px;margin-top:3px}
+.bhact{display:flex;align-items:center;gap:8px}
+.bmore{width:30px;height:30px;border-radius:50%;background:#171A1E;display:flex;align-items:center;justify-content:center;
+  color:#8E8F96;font-size:14px;letter-spacing:1px;line-height:1}
+.bsolid{height:30px;padding:0 13px;border-radius:15px;background:#2CD9A0;color:#04150F;
+  font-size:12px;font-weight:700;display:flex;align-items:center;letter-spacing:.3px}
+
+/* 仪表盘主卡 */
+.gaug{display:flex;gap:12px;align-items:center}
+.ring{flex:0 0 102px;position:relative;width:102px;height:102px}
+.ring .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.ring .ctr b{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:22px;font-weight:700;letter-spacing:-1.2px;line-height:1}
+.ring .ctr span{font-size:8.5px;color:#6E6F76;letter-spacing:.4px}
+.read{flex:1;display:flex;flex-direction:column;gap:8px}
+.read .r{display:flex;align-items:baseline;justify-content:space-between}
+.read .k{font-size:10px;color:#6E6F76;letter-spacing:.6px}
+.read .v{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:16px;font-weight:600;letter-spacing:-.5px}
+.read .v i{font-style:normal;font-size:9px;color:#6E6F76;font-weight:500;margin-left:2px}
+.read .v.hi{color:#2CD9A0}
+
+.gadv{margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);
+  display:flex;gap:7px;align-items:flex-start;font-size:11px;line-height:1.45;color:#9A9BA2}
+.gadv em{font-style:normal;color:#2CD9A0;font-weight:600}
+.gadv .ar{color:#2CD9A0}
+
+.lsthd{display:flex;align-items:center;justify-content:space-between;padding:11px 2px 7px}
+.lsthd .l{font-size:12px;font-weight:600;letter-spacing:.3px}
+.lsthd .r{font-size:10px;color:#5B5C63;letter-spacing:.4px}
+
+.exrow{background:#14161A;border-radius:14px;margin-bottom:7px;overflow:hidden}
+.exrow .top{display:flex;align-items:center;gap:9px;height:40px;padding:0 12px}
+.idx{flex:0 0 18px;height:18px;border-radius:5px;background:#1D2025;display:flex;align-items:center;justify-content:center;
+  font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:#7A7C84;font-weight:600}
+.exrow .top.on .idx{background:#2CD9A0;color:#04150F}
+.ename{font-size:14px;font-weight:600;letter-spacing:-.1px}
+.etag{font-size:9px;color:#63646A;padding:1.5px 4px;border-radius:3px;background:#1D2025;letter-spacing:.3px}
+.eprog{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:600;color:#fff;letter-spacing:-.4px}
+.eprog.dim{color:#63646A;font-weight:500}
+.eprog i{font-style:normal;font-size:9px;color:#5B5C63;font-weight:500}
+.chev{width:13px;height:13px;stroke:#4A4B51;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;margin-left:2px}
+.chev.up{transform:rotate(180deg)}
+
+.body{padding:0 9px 9px}
+.srow2{display:grid;grid-template-columns:20px 1fr 56px 42px 24px;column-gap:7px;align-items:center;height:34px;
+  background:#1A1D22;border-radius:9px;margin-top:4px;padding:0 7px}
+.srow2.done{background:#16211D}
+.sn{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:#63646A;font-weight:600}
+.srow2.done .sn{color:#2CD9A0}
+.sref{font-family:ui-monospace,Menlo,monospace;font-size:9.5px;color:#4E4F56;letter-spacing:-.3px}
+.pill{height:25px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:#24282E;
+  font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:600;letter-spacing:-.5px}
+.srow2.done .pill{background:#1E2C26}
+.pill.sw{font-family:inherit;font-size:11px;font-weight:600;color:#C9CAD0;letter-spacing:0}
+.sck{width:22px;height:22px;border-radius:50%;box-shadow:inset 0 0 0 1.5px #34373D;justify-self:end;
+  display:flex;align-items:center;justify-content:center}
+.sck.on{background:#2CD9A0;box-shadow:none}
+.sck svg{width:11px;height:11px;stroke:#04150F;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.sck.on svg{opacity:1}
+.add2{height:26px;display:flex;align-items:center;gap:4px;font-size:10.5px;color:#2CD9A0;font-weight:600;padding-left:2px}
+
+/* 悬浮休息胶囊 */
+.restbgp{position:absolute;left:16px;right:16px;bottom:10px;height:48px;border-radius:24px;z-index:2;
+  background:rgba(24,27,31,.94);box-shadow:0 0 0 1px rgba(255,255,255,.09),0 12px 30px rgba(0,0,0,.7);
+  display:flex;align-items:center;gap:10px;padding:0 8px 0 12px;backdrop-filter:blur(12px)}
+.restbgp .rr{width:28px;height:28px;position:relative;flex:0 0 28px}
+.restbgp .rt{font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:600;color:#2CD9A0;letter-spacing:-.4px}
+.restbgp .rl{font-size:9px;color:#6E6F76;letter-spacing:1px}
+.restbgp .acts{margin-left:auto;display:flex;gap:4px}
+.restbgp .acts b{font-size:10.5px;font-weight:500;color:#B9BAC1;padding:5px 9px;border-radius:12px;background:#22262B}
+
+/* ---------- B 负荷页 ---------- */
+.b2head{display:flex;align-items:center;justify-content:space-between;padding:2px 0 12px}
+.b2t{font-size:18px;font-weight:700;letter-spacing:-.4px}
+.seg{display:flex;background:#14161A;border-radius:9px;padding:2px}
+.seg span{font-size:10.5px;color:#7A7C84;padding:4px 9px;border-radius:7px;letter-spacing:.2px}
+.seg .on{background:#24282E;color:#fff;font-weight:600}
+
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kpi{background:#14161A;border-radius:14px;padding:11px 12px 10px}
+.kpi .k{font-size:9.5px;color:#6E6F76;letter-spacing:.8px}
+.kpi .v{font-family:ui-monospace,Menlo,monospace;font-size:23px;font-weight:600;letter-spacing:-1px;margin-top:4px;line-height:1}
+.kpi .v i{font-style:normal;font-size:9px;color:#6E6F76;font-weight:500;margin-left:2px;letter-spacing:0}
+.kpi .s{font-size:9px;color:#5B5C63;margin-top:5px;letter-spacing:.2px}
+.kpi .v.up{color:#2CD9A0}
+
+.mhd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
+.mhd .l{font-size:12px;font-weight:600;letter-spacing:.2px}
+.mhd .r{font-size:9px;color:#5B5C63}
+.legend2{display:flex;gap:9px;font-size:8.5px;color:#5B5C63;margin:7px 0 3px}
+.legend2 span{display:flex;align-items:center;gap:4px}
+.legend2 i{width:8px;height:8px;border-radius:2px;display:block}
+.legend2 i.band{background:rgba(44,217,160,.22);box-shadow:inset 0 0 0 1px rgba(44,217,160,.35)}
+
+.mr{padding:7px 0 6px;border-bottom:1px solid rgba(255,255,255,.045)}
+.mr:last-child{border-bottom:none;padding-bottom:2px}
+.mr .l1{display:flex;align-items:baseline;gap:6px}
+.mr .nm{font-size:12px;font-weight:500}
+.mr .num{margin-left:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:600;letter-spacing:-.3px}
+.mr .num i{font-style:normal;font-size:9px;color:#4E4F56;font-weight:500}
+.mr .st{font-size:9px;width:22px;text-align:right;letter-spacing:.2px}
+.mr .tr{position:relative;height:8px;border-radius:3px;background:#1E2127;margin-top:6px;overflow:hidden}
+.mr .tr .band{position:absolute;top:0;bottom:0;background:rgba(44,217,160,.20)}
+.mr .tr .fill{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.mr .tr .tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.34)}
+
+.e1big{display:flex;align-items:flex-end;justify-content:space-between;margin-top:2px}
+.e1big .n{display:flex;align-items:baseline;gap:4px}
+.e1big .n b{font-family:ui-monospace,Menlo,monospace;font-size:38px;font-weight:600;letter-spacing:-2.2px;line-height:.9}
+.e1big .n i{font-style:normal;font-size:10px;color:#6E6F76}
+.e1big .d{font-size:9.5px;color:#2CD9A0;font-weight:600;background:rgba(44,217,160,.12);padding:3px 7px;border-radius:9px;letter-spacing:.2px}
+
+footer.f{margin-top:40px;display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:#7C7D85;line-height:1.6}
+footer.f b{color:#C6C7CE;font-weight:600}
+.tagline{padding:5px 9px;border-radius:6px;background:#121316;border:1px solid rgba(255,255,255,.06)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Rep · 视觉方向 B / 3</div>
+  <h1>仪表盘 <s>· DASHBOARD</s></h1>
+  <div class="claim">先给结论再给工具：顶部一块表把今天的进度一次说完，训练区退成紧凑清单，点开才录组。</div>
+
+  <div class="tokens">
+    <span class="chip"><span class="sw" style="background:#14161A"></span>卡 <b>#14161A</b> · 内层 <b>#1A1D22</b></span>
+    <span class="chip"><span class="sw" style="background:#2CD9A0"></span>达标 <b>#2CD9A0</b></span>
+    <span class="chip"><span class="sw" style="background:#E8A33D"></span>欠练 <b>#E8A33D</b></span>
+    <span class="chip"><span class="sw" style="background:#E0564E"></span>过量 <b>#E0564E</b></span>
+    <span class="chip">数字 <b>38</b> · <b>23</b> · <b>15</b> px mono</span>
+    <span class="chip">圆角 <b>20</b> / <b>14</b> / <b>9</b> · 间距 <b>8 / 12 / 20</b></span>
+  </div>
+
+  <div class="stage">
+    <!-- ===== 训练页 ===== -->
+    <figure class="pf">
+      <figcaption>训练页 · WORKOUT</figcaption>
+      <div class="scaler">
+      <div class="phone">
+        <div class="sbar">
+          <span class="tm">09:41</span><span class="isl"></span>
+          <span class="sico">
+            <svg width="17" height="11" viewBox="0 0 17 11" fill="#fff"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="4.6" width="3" height="6.4" rx="1"/><rect x="9" y="2.2" width="3" height="8.8" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.7a10 10 0 0 1 14 0"/><path d="M3.7 6.4a6.1 6.1 0 0 1 8.6 0"/><path d="M6.3 9.1a2.4 2.4 0 0 1 3.4 0"/></svg>
+            <span class="batt"><i></i></span>
+          </span>
+        </div>
+
+        <div class="scr">
+          <div class="bhead">
+            <div>
+              <div class="bdate">10月14日 周三</div>
+              <div class="btitle">DAY 2 · 拉日</div>
+            </div>
+            <div class="bhact">
+              <span class="bmore">···</span>
+              <span class="bsolid">完成</span>
+            </div>
+          </div>
+
+          <!-- 主仪表 -->
+          <div class="card">
+            <div class="gaug">
+              <div class="ring">
+                <svg width="108" height="108" viewBox="0 0 108 108">
+                  <g stroke="#1E2127" stroke-width="8" stroke-linecap="round">
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(0 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(30 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(60 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(90 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(120 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(150 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(180 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(210 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(240 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(270 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(300 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(330 54 54)"/>
+                  </g>
+                  <g stroke="#2CD9A0" stroke-width="8" stroke-linecap="round">
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(0 54 54)"/>
+                    <line x1="54" y1="8.5" x2="54" y2="19.5" transform="rotate(30 54 54)"/>
+                  </g>
+                </svg>
+                <div class="ctr"><b>2/12</b><span>组 · 17%</span></div>
+              </div>
+              <div class="read">
+                <div class="r"><span class="k">累计容量</span><span class="v">480<i>kg</i></span></div>
+                <div class="r"><span class="k">本次用时</span><span class="v">14:26</span></div>
+                <div class="r"><span class="k">剩余组数</span><span class="v hi">10</span></div>
+              </div>
+            </div>
+            <div class="gadv">
+              <span class="ar">↑</span>
+              <span><em>硬拉</em> 前次达成 12 次，首组提重 +2.5 至 <em>22.5kg</em>，目标 6 次</span>
+            </div>
+          </div>
+
+          <div class="lsthd">
+            <span class="l">今日动作</span>
+            <span class="r">5 个动作 · 12 组</span>
+          </div>
+
+          <!-- 展开的动作 -->
+          <div class="exrow">
+            <div class="top on">
+              <span class="idx">1</span>
+              <span class="ename">硬拉</span><span class="etag">背 · 主项</span>
+              <span class="eprog">2<i>/3</i></span>
+              <svg class="chev up" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="body">
+              <div class="srow2 done">
+                <span class="sn">01</span><span class="sref">20 × 12</span>
+                <span class="pill">20</span><span class="pill">12</span>
+                <span class="sck on"><svg viewBox="0 0 24 24"><path d="M4 12.5l5.2 5.2L20 6.5"/></svg></span>
+              </div>
+              <div class="srow2 done">
+                <span class="sn">02</span><span class="sref">—</span>
+                <span class="pill">20</span><span class="pill">12</span>
+                <span class="sck on"><svg viewBox="0 0 24 24"><path d="M4 12.5l5.2 5.2L20 6.5"/></svg></span>
+              </div>
+              <div class="srow2">
+                <span class="sn">03</span><span class="sref">—</span>
+                <span class="pill">20</span><span class="pill">12</span>
+                <span class="sck"><svg viewBox="0 0 24 24"><path d="M4 12.5l5.2 5.2L20 6.5"/></svg></span>
+              </div>
+              <div class="add2">＋ 添加一组</div>
+            </div>
+          </div>
+
+          <div class="exrow"><div class="top"><span class="idx">2</span><span class="ename">高位下拉</span><span class="etag">背</span><span class="eprog dim">0<i>/2</i></span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+          <div class="exrow"><div class="top"><span class="idx">3</span><span class="ename">悬垂举腿</span><span class="etag">核心</span><span class="eprog dim">0<i>/2</i></span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+          <div class="exrow"><div class="top"><span class="idx">4</span><span class="ename">坐姿划船</span><span class="etag">背</span><span class="eprog dim">0<i>/3</i></span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+          <div class="exrow"><div class="top"><span class="idx">5</span><span class="ename">哑铃弯举</span><span class="etag">手臂</span><span class="eprog dim">0<i>/2</i></span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+
+          <div class="restbgp">
+            <div class="rr">
+              <svg width="28" height="28" viewBox="0 0 28 28">
+                <circle cx="14" cy="14" r="11.5" stroke="#2A2E34" stroke-width="3" fill="none"/>
+                <circle cx="14" cy="14" r="11.5" stroke="#2CD9A0" stroke-width="3" fill="none"
+                  stroke-dasharray="46 72.3" stroke-linecap="round" transform="rotate(-90 14 14)"/>
+              </svg>
+            </div>
+            <span class="rl">休息</span>
+            <span class="rt">01:30</span>
+            <span class="acts"><b>+30s</b><b>跳过</b></span>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <div class="t on"><svg viewBox="0 0 24 24"><path d="M6.5 8v8M9.5 5.5v13M14.5 5.5v13M17.5 8v8M9.5 12h5"/></svg><span>训练</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M3 12h3.5l2.5-6.5 4.5 13 2.5-6.5H21"/></svg><span>负荷</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3v4M15.5 3v4"/></svg><span>日历</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M12 3l9 4.7-9 4.7-9-4.7L12 3zM3 12.6l9 4.7 9-4.7M3 17.3l9 4.7 9-4.7"/></svg><span>动作库</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20.5c.6-3.9 3.6-5.9 7.2-5.9s6.6 2 7.2 5.9"/></svg><span>身体</span><i></i></div>
+        </nav>
+      </div>
+      </div>
+    </figure>
+
+    <!-- ===== 负荷页 ===== -->
+    <figure class="pf">
+      <figcaption>负荷页 · ANALYTICS</figcaption>
+      <div class="scaler">
+      <div class="phone">
+        <div class="sbar">
+          <span class="tm">09:41</span><span class="isl"></span>
+          <span class="sico">
+            <svg width="17" height="11" viewBox="0 0 17 11" fill="#fff"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="4.6" width="3" height="6.4" rx="1"/><rect x="9" y="2.2" width="3" height="8.8" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.7a10 10 0 0 1 14 0"/><path d="M3.7 6.4a6.1 6.1 0 0 1 8.6 0"/><path d="M6.3 9.1a2.4 2.4 0 0 1 3.4 0"/></svg>
+            <span class="batt"><i></i></span>
+          </span>
+        </div>
+
+        <div class="scr">
+          <div class="b2head">
+            <div class="b2t">负荷与表现</div>
+            <div class="seg"><span class="on">本周</span><span>本月</span><span>近8周</span></div>
+          </div>
+
+          <div class="kpis">
+            <div class="kpi">
+              <div class="k">训练次数</div><div class="v">4<i>次</i></div>
+              <div class="s">拉 2 · 推 1 · 腿 1</div>
+            </div>
+            <div class="kpi">
+              <div class="k">总容量</div><div class="v">8168<i>kg</i></div>
+              <div class="s">上周 6204 kg</div>
+            </div>
+            <div class="kpi">
+              <div class="k">有效组数</div><div class="v">35<i>组</i></div>
+              <div class="s">日均 5.0 组</div>
+            </div>
+            <div class="kpi">
+              <div class="k">容量环比</div><div class="v up">+1.6<i>%</i></div>
+              <div class="s">连续 3 周上行</div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:10px">
+            <div class="mhd"><span class="l">周肌群有效组数</span><span class="r">本周 vs 上周</span></div>
+            <div class="legend2">
+              <span><i class="band"></i>MEV–MAV 达标带</span>
+              <span><i style="background:#2CD9A0"></i>达标</span>
+              <span><i style="background:#E8A33D"></i>欠练</span>
+              <span><i style="background:#E0564E"></i>过量</span>
+            </div>
+
+            <div class="mr">
+              <div class="l1"><span class="nm">胸部</span><span class="num">13<i>/16</i></span><span class="st" style="color:#2CD9A0">达标</span></div>
+              <div class="tr"><span class="band" style="left:41.7%;width:25%"></span><span class="fill" style="width:54.2%;background:#2CD9A0"></span><span class="tick" style="left:66.7%"></span></div>
+            </div>
+            <div class="mr">
+              <div class="l1"><span class="nm">背部</span><span class="num">2<i>/16</i></span><span class="st" style="color:#E8A33D">欠练</span></div>
+              <div class="tr"><span class="band" style="left:41.7%;width:25%"></span><span class="fill" style="width:8.3%;background:#E8A33D"></span><span class="tick" style="left:66.7%"></span></div>
+            </div>
+            <div class="mr">
+              <div class="l1"><span class="nm">腿部</span><span class="num">9<i>/18</i></span><span class="st" style="color:#E8A33D">欠练</span></div>
+              <div class="tr"><span class="band" style="left:50%;width:25%"></span><span class="fill" style="width:37.5%;background:#E8A33D"></span><span class="tick" style="left:75%"></span></div>
+            </div>
+            <div class="mr">
+              <div class="l1"><span class="nm">肩部</span><span class="num">15.5<i>/14</i></span><span class="st" style="color:#E0564E">过量</span></div>
+              <div class="tr"><span class="band" style="left:33.3%;width:25%"></span><span class="fill" style="width:64.6%;background:#E0564E"></span><span class="tick" style="left:58.3%"></span></div>
+            </div>
+            <div style="font-size:8.5px;color:#4E4F56;margin-top:8px;letter-spacing:.2px">底线 = 0 组 · 横条长度统一按 24 组满刻度，可跨部位直接比长短；竖线为 MAV 上限</div>
+          </div>
+
+          <div class="card">
+            <div class="mhd"><span class="l">卧推 · E1RM 极限拟合</span><span class="r">最佳正式组 40.0 kg × 12</span></div>
+            <div class="e1big">
+              <div class="n"><b>56.0</b><i>kg</i></div>
+              <div class="d">＋33.3% 本周突破</div>
+            </div>
+            <svg width="100%" height="118" viewBox="0 0 325 118" preserveAspectRatio="none" style="margin-top:8px">
+              <defs>
+                <linearGradient id="ga" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#2CD9A0" stop-opacity=".22"/>
+                  <stop offset="1" stop-color="#2CD9A0" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <g font-family="ui-monospace,Menlo,monospace" font-size="8.5" fill="#4E4F56">
+                <line x1="20" y1="10" x2="325" y2="10" stroke="#1B1E23"/>
+                <line x1="20" y1="31" x2="325" y2="31" stroke="#1B1E23"/>
+                <line x1="20" y1="52" x2="325" y2="52" stroke="#1B1E23"/>
+                <line x1="20" y1="73" x2="325" y2="73" stroke="#1B1E23"/>
+                <line x1="20" y1="94" x2="325" y2="94" stroke="#1B1E23"/>
+                <text x="0" y="13">60</text><text x="0" y="34">55</text><text x="0" y="55">50</text>
+                <text x="0" y="76">45</text><text x="0" y="97">40</text>
+              </g>
+              <line x1="20" y1="46" x2="325" y2="46" stroke="#E8A33D" stroke-width="1" stroke-dasharray="3 4" opacity=".6"/>
+              <text x="252" y="43" font-family="ui-monospace,Menlo,monospace" font-size="8" fill="#8A6A33">前次 PR 51.5</text>
+              <path d="M20 94 L20 85.2 L81 70.6 L142 68.5 L203 51.8 L264 46 L325 27.2 L325 94 Z" fill="url(#ga)"/>
+              <polyline points="20,85.2 81,70.6 142,68.5 203,51.8 264,46 325,27.2"
+                fill="none" stroke="#2CD9A0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="264" cy="46" r="3" fill="#14161A" stroke="#2CD9A0" stroke-width="1.6"/>
+              <circle cx="325" cy="27.2" r="5.5" fill="#2CD9A0"/>
+              <circle cx="325" cy="27.2" r="2.2" fill="#04150F"/>
+            </svg>
+            <div style="display:flex;justify-content:space-between;font-family:ui-monospace,Menlo,monospace;font-size:8.5px;color:#46474E;margin-top:2px;padding-left:20px">
+              <span>9/2</span><span>9/16</span><span>9/30</span><span>10/7</span><span>10/14</span>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:10px;display:flex;gap:7px;align-items:flex-start">
+            <span style="color:#2CD9A0;font-size:11px">↑</span>
+            <span style="font-size:11px;line-height:1.45;color:#9A9BA2">连续达成目标 12 次 · 首组提至
+              <em style="font-style:normal;color:#2CD9A0;font-weight:600">42.5kg</em>，目标 6 次</span>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M6.5 8v8M9.5 5.5v13M14.5 5.5v13M17.5 8v8M9.5 12h5"/></svg><span>训练</span><i></i></div>
+          <div class="t on"><svg viewBox="0 0 24 24"><path d="M3 12h3.5l2.5-6.5 4.5 13 2.5-6.5H21"/></svg><span>负荷</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14" rx="2.5"/><path d="M4 10h16M8.5 3v4M15.5 3v4"/></svg><span>日历</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><path d="M12 3l9 4.7-9 4.7-9-4.7L12 3zM3 12.6l9 4.7 9-4.7M3 17.3l9 4.7 9-4.7"/></svg><span>动作库</span><i></i></div>
+          <div class="t"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20.5c.6-3.9 3.6-5.9 7.2-5.9s6.6 2 7.2 5.9"/></svg><span>身体</span><i></i></div>
+        </nav>
+      </div>
+      </div>
+    </figure>
+  </div>
+
+  <footer class="f">
+    <span class="tagline"><b>适用</b> 疲劳/没状态，先看今天练完没、还差多少</span>
+    <span class="tagline"><b>代价</b> 中 · 需改训练页 IA 与动作卡折叠</span>
+    <span class="tagline"><b>放弃</b> 三列指标等权、常驻建议横幅、每行双输入框</span>
+  </footer>
+</div>
+</body>
+</html>
