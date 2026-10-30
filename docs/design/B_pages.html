@@ -216,8 +216,6 @@ h1 s{text-decoration:none;color:var(--t2);font-weight:500}
 .sheet .tag{height:22px;padding:0 8px;border-radius:29px;background:var(--sub);color:var(--t2);
   font-size:11px;display:flex;align-items:center;font-weight:500}
 .sheet .tag.pr{background:rgba(48,209,88,.14);color:var(--g);font-weight:700}
-.sheet .close{width:28px;height:28px;border-radius:29px;background:var(--sub);display:flex;align-items:center;justify-content:center;
-  color:var(--t2);font-size:13px;line-height:1;flex:0 0 28px}
 .sect{font-size:11px;letter-spacing:1.2px;color:var(--t2);font-weight:600;margin:16px 0 8px}
 .prg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .prc{background:var(--sub);border-radius:14px;padding:10px 12px}
@@ -669,7 +667,6 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
                   <span class="tag pr">PR</span>
                 </div>
               </div>
-              <div class="close">✕</div>
             </div>
 
             <div class="sect">PERSONAL RECORDS</div>
@@ -764,7 +761,6 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
                 <div class="nm">记录身体数据</div>
                 <div class="subtitle">10月14日 周三 · 已记录过 · 保存会覆盖今天</div>
               </div>
-              <div class="close">✕</div>
             </div>
 
             <div class="field">
@@ -788,7 +784,7 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
         </div>
       </div>
       </div>
-    <div class="note"><b>状态</b> 体重清空时：数值显示 --、保存按钮 <b>alpha 0.4 且 disabled</b>、助手文案换成「体重是趋势图的基础，填一个就行」<br><b>动效</b> 保存后折线新点 alpha 0→1 200ms、折线重绘 400ms；<b>不做数字滚动</b>（与 TalkBack 播报冲突）<br><b>别动</b> 保存是弹层内的块状主按钮 48 高 / 圆角 16 / 14sp，<b>不是</b>屏级 58 / 29 / 17 胶囊——这是两级尺寸，别统一；现有代码是 44 / 16 / 14sp，只需把高度抬到 48</div>
+    <div class="note"><b>状态</b> 体重清空时：数值显示 --、保存按钮 <b>alpha 0.4 且 disabled</b>、助手文案换成「体重是趋势图的基础，填一个就行」；<b>没有 ✕</b>——ModalBottomSheet 靠下拉把手 + 点遮罩关闭，代码里也没有关闭按钮，别为对称补一个 28 的 ✕（那是一个低于 44 底线的点击目标）<br><b>动效</b> 保存后折线新点 alpha 0→1 200ms、折线重绘 400ms；<b>不做数字滚动</b>（与 TalkBack 播报冲突）<br><b>别动</b> 保存是弹层内的块状主按钮 48 高 / 圆角 16 / 14sp，<b>不是</b>屏级 58 / 29 / 17 胶囊——这是两级尺寸，别统一（代码已对齐：`LibraryScreen.kt` 的 `BodyMetricSheet` 用显式 `height(48.dp)`，不再靠 `padding(vertical=12)` 凑高度）</div>
     </figure>
 
   </div>
