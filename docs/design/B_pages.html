@@ -236,6 +236,24 @@ h1 s{text-decoration:none;color:var(--t2);font-weight:500}
 .hrow .badge{font-size:11px;font-weight:700;color:var(--g);background:rgba(48,209,88,.14);
   padding:2px 6px;border-radius:29px;margin-left:8px}
 .sheet .pad{height:20px}
+/* ⑤ 录入弹层 */
+.subtitle{font-size:11px;color:var(--t2);margin-top:4px;letter-spacing:.1px}
+.field{background:var(--sub);border-radius:14px;padding:14px;margin-top:16px}
+.field .fl{display:flex;align-items:baseline;justify-content:space-between;font-size:11px;color:var(--t2)}
+.field .frow{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.field .fv{font-family:ui-monospace,Menlo,monospace;font-size:32px;font-weight:600;letter-spacing:-1.8px;line-height:1}
+.field .fv span{font-size:11px;font-weight:500;color:var(--t2);letter-spacing:0;margin-left:4px}
+.stp{display:flex;gap:8px}
+.stp b{height:48px;min-width:66px;padding:0 12px;border-radius:29px;background:var(--act);color:var(--t1);
+  font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center}
+.stp b.plus{color:var(--g)}
+.helper{font-size:11px;color:var(--t2);margin-top:8px;line-height:1.4}
+.foldrow{display:flex;align-items:center;height:56px;margin-top:12px;padding:0 14px;background:var(--sub);border-radius:14px}
+.foldrow .t{font-size:13px;font-weight:600}
+.foldrow .m{margin-left:auto;margin-right:8px;font-size:11px;color:var(--t2);font-family:ui-monospace,Menlo,monospace}
+.save{height:58px;border-radius:29px;background:var(--g);color:#000;font-size:15px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;margin-top:20px;letter-spacing:.4px}
+.botpad{height:24px}
 
 /* ---------- 页脚令牌 ---------- */
 footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;color:#7C7D85;line-height:1.6;justify-content:center}
@@ -383,7 +401,7 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
         </nav>
       </div>
       </div>
-    <div class="note"><b>状态</b> 非本月不渲染日号（应与 monthGridCells() 的 null → Spacer 一致）；非本月时 legend 右侧出现「回今天」，48dp 热区<br><b>别动</b> 水平内边距 8 与网格水平内边距 8 是一对——改任一边，格宽就从 47 变 49.3，整格重算<br><b>别动</b> 卡片顶边距 8 是有意的（结论卡/明细卡是 16）——改成 16 求「对齐」，底部余量就从 23 掉到 15</div>
+    <div class="note"><b>状态</b> 非本月不渲染日号（应与 monthGridCells() 的 null → Spacer 一致）；非本月时 legend 右侧出现「回今天」，48dp 热区（本轮统一下限，非平台自动扩张）<br><b>别动</b> 水平内边距 8 与网格水平内边距 8 是一对——改任一边，格宽就从 47 变 49.3，整格重算<br><b>别动</b> 卡片顶边距 8 是有意的（结论卡/明细卡是 16）——改成 16 求「对齐」，底部余量就从 23 掉到 15<br><b>别动</b> 体测点必须在 34 盒下方（卡片底色上）——蓝 #0A84FF 压绿底只有 1.80:1，压卡片底 4.66:1；只换颜色不换位置会更糟</div>
     </figure>
 
     <!-- ==================== ② 动作库 ==================== -->
@@ -702,6 +720,76 @@ footer.f{margin-top:36px;display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;co
       </div>
       </div>
     <div class="note"><b>状态</b> 无记录动作：PR 两张卡显示「--」，历史区给一句空态文案</div>
+    </figure>
+    <!-- ==================== ⑤ 身体数据录入弹层 ==================== -->
+    <figure class="pf">
+      <figcaption><b>⑤</b> 身体数据录入弹层 · 日历 / 身体两页共用</figcaption>
+      <div class="scaler">
+      <div class="phone">
+        <div class="sbar">
+          <span class="tm">09:41</span><span class="isl"></span>
+          <span class="sico">
+            <svg width="17" height="11" viewBox="0 0 17 11" fill="#fff"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="4.6" width="3" height="6.4" rx="1"/><rect x="9" y="2.2" width="3" height="8.8" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M1 3.7a10 10 0 0 1 14 0"/><path d="M3.7 6.4a6.1 6.1 0 0 1 8.6 0"/><path d="M6.3 9.1a2.4 2.4 0 0 1 3.4 0"/></svg>
+            <span class="batt"><i></i></span>
+          </span>
+        </div>
+
+        <div class="backdrop">
+          <div class="ghost" style="padding-top:6px">
+            <div class="hd" style="margin-bottom:10px">
+              <div>
+                <div class="eyebrow">BODY · 10月14日 记录</div>
+                <div class="tt">身体</div>
+              </div>
+            </div>
+            <div class="hero">
+              <div class="col main">
+                <div class="k">当前体重</div>
+                <div class="v">72.4<i>kg</i></div>
+                <div class="d">−0.6 kg · 较 10月12日</div>
+              </div>
+              <div class="col side">
+                <div class="k">体脂</div>
+                <div class="v sm">18.2<i>%</i></div>
+                <div class="d">−0.7 pt · 7 天</div>
+              </div>
+            </div>
+          </div>
+          <div class="dim"></div>
+
+          <div class="sheet" style="top:auto">
+            <div class="handle"></div>
+            <div class="st">
+              <div>
+                <div class="nm">记录身体数据</div>
+                <div class="subtitle">10月14日 周三 · 已记录过 · 保存会覆盖今天</div>
+              </div>
+              <div class="close">✕</div>
+            </div>
+
+            <div class="field">
+              <div class="fl"><span>体重 · 必填</span><span>kg</span></div>
+              <div class="frow">
+                <div class="fv">72.4<span>kg</span></div>
+                <div class="stp"><b>−0.1</b><b class="plus">＋0.1</b></div>
+              </div>
+            </div>
+            <div class="helper">上次 10月12日 73.0 kg · 也可直接输入</div>
+
+            <div class="foldrow">
+              <span class="t">体脂 · 身高 · 围度</span>
+              <span class="m">18.2% · 175 · 3 项</span>
+              <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+            </div>
+
+            <div class="save">保存</div>
+            <div class="botpad"></div>
+          </div>
+        </div>
+      </div>
+      </div>
+    <div class="note"><b>状态</b> 体重清空时：数值显示 --、保存按钮 <b>alpha 0.4 且 disabled</b>、助手文案换成「体重是趋势图的基础，填一个就行」<br><b>动效</b> 保存后折线新点 alpha 0→1 200ms、折线重绘 400ms；<b>不做数字滚动</b>（与 TalkBack 播报冲突）</div>
     </figure>
 
   </div>
