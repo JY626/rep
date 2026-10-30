@@ -295,7 +295,8 @@ fun LibraryScreen(
                         onClear = {
                             query = ""
                             selectedMuscle = "全部"
-                        }
+                        },
+                        onCreate = { showCreateSheet = true }
                     )
                 }
             } else {
@@ -333,34 +334,43 @@ fun LibraryScreen(
     }
 }
 
-/** 右上角「＋ 新建动作」：30dp 胶囊，绿底黑字。 */
+/**
+ * 右上角「＋ 新建动作」：视觉仍是 30dp 胶囊，但点击热区抬到 44dp ——
+ * 30dp 是全页唯一低于 44dp 触控下限的控件，为视觉压扁控件不该让手指遭罪。
+ */
 @Composable
 private fun CreatePill(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .height(30.dp)
-            .clip(RoundedCornerShape(15.dp))
-            .background(AppleFitnessGreen)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .height(44.dp)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Box(
+            modifier = Modifier
+                .height(30.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(AppleFitnessGreen)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = LucideIcons.Plus,
-                contentDescription = null,
-                tint = Color.Black,
-                modifier = Modifier.size(12.dp)
-            )
-            Text(
-                text = "新建动作",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.Black
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = LucideIcons.Plus,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(12.dp)
+                )
+                Text(
+                    text = "新建动作",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.Black
+                )
+            }
         }
     }
 }
@@ -565,12 +575,17 @@ private fun ExerciseListItem(
     }
 }
 
-/** 搜索/筛选无结果：说清「哪个词、哪个部位没命中」，并给一条退路。 */
+/**
+ * 搜索/筛选无结果：说清「哪个词、哪个部位没命中」，并给两条退路 ——
+ * 清除筛选、直接新建。页眉会随列表滚走，所以「新建动作」在这里必须再给一次，
+ * 否则用户滚到无结果的位置就找不到入口了。
+ */
 @Composable
 private fun EmptyResultState(
     query: String,
     muscle: String,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onCreate: () -> Unit
 ) {
     val message = when {
         query.isNotEmpty() && muscle != "全部" -> "「$muscle」里没有匹配「$query」的动作"
@@ -599,20 +614,42 @@ private fun EmptyResultState(
             color = AppleTextSecondary,
             textAlign = TextAlign.Center
         )
-        Box(
-            modifier = Modifier
-                .height(40.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .clickable(onClick = onClear)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center
+        Row(
+            modifier = Modifier.padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "清除筛选",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = AppleFitnessGreen
-            )
+            Box(
+                modifier = Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable(onClick = onClear)
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "清除筛选",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AppleFitnessGreen
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(AppleFitnessGreen)
+                    .clickable(onClick = onCreate)
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "＋ 新建动作",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black
+                )
+            }
         }
     }
 }

@@ -564,7 +564,8 @@ private fun SummaryCell(
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = (-1).sp,
-                color = AppleTextPrimary,
+                // 全新安装全是 0：0 不该用强调白，否则「没有数据」看起来像「有数据」
+                color = if (value == "0") AppleTextSecondary else AppleTextPrimary,
                 maxLines = 1
             )
             Text(
@@ -735,7 +736,10 @@ private fun TrainingSettingsPage(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    // 48dp = 本轮团队统一下限（Android 对齐目标），显式写死不依赖任何默认值；
+                    // 注意纯 Modifier.clickable 不会自动把 44 撑到 48，写小了没有任何机制兜底。
+                    // 视觉图标仍是 20dp。
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onBack)
                     .semantics {
@@ -1065,7 +1069,7 @@ private fun TrainingCheckInCalendar(
 
         if (!trainedThisMonth) {
             Text(
-                text = "这个月还没有训练记录",
+                text = "这个月还没有训练记录 · 去底部「训练」开始",
                 fontSize = 11.sp,
                 color = AppleTextSecondary,
                 modifier = Modifier.padding(horizontal = 8.dp)
@@ -1165,8 +1169,9 @@ private fun DayCell(
             append(if (hasMetric) "有体测记录" else "无体测记录")
         }
     }
-    // 34dp 上的 14dp 圆角是 squircle，不是正圆
+    // 34dp 上的 14dp 圆角是 squircle，不是正圆；41dp 外环用同心圆角（14 + 3.5）
     val shape = RoundedCornerShape(14.dp)
+    val ringShape = RoundedCornerShape(17.dp)
     Box(
         modifier = modifier
             .height(48.dp)
@@ -1177,17 +1182,19 @@ private fun DayCell(
             },
         contentAlignment = Alignment.Center
     ) {
-        Box(modifier = Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-            // 今天：34dp 槽位内画 1.5dp 绿环（不外扩，避免被卡片圆角裁掉）
-            if (isToday) {
-                Box(modifier = Modifier.matchParentSize().border(1.5.dp, AppleFitnessGreen, shape))
-            }
-            // 今天 + 已训练：绿底再往里收，让出「2dp 空气 + 1.5dp 环」的双层环
-            val innerInset = if (isToday && isTrained) 3.5.dp else 0.dp
+        // 41dp 包络恒定渲染：今天画环，非今天只是一层空壳，保证 34dp 绿盘在两种状态下都居中且等大
+        Box(
+            modifier = Modifier
+                .size(41.dp)
+                .then(
+                    if (isToday) Modifier.border(1.5.dp, AppleFitnessGreen, ringShape)
+                    else Modifier
+                ),
+            contentAlignment = Alignment.Center
+        ) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerInset)
+                    .size(34.dp)
                     .clip(shape)
                     .background(if (isTrained) AppleFitnessGreen else Color.Transparent),
                 contentAlignment = Alignment.Center
@@ -1205,13 +1212,13 @@ private fun DayCell(
                 )
             }
         }
-        // 有体测：4dp 蓝点贴到 48dp 格底部内侧（y42–46），不用负 offset，避免被卡片 clip 裁掉。
-        // 只称了体重没训练的日子同样画点 —— 那是正常状态。
+        // 有体测：4dp 蓝点放格子右上角（y2–6），落在 41dp 环的圆角切口之外，
+        // 与「今天」的双层环永不重叠 —— 所以绿盘不必缩小。
         if (hasMetric) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 2.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(top = 2.dp, end = 2.dp)
                     .size(4.dp)
                     .clip(CircleShape)
                     .background(AppleSystemBlue)
@@ -1221,7 +1228,12 @@ private fun DayCell(
     }
 }
 
-/** 48×48 触控盒里放 26dp 视觉圆（箭头 14sp）；点击挂在 48 的盒子上。 */
+/**
+ * 48×48 触控盒里放 26dp 视觉圆（箭头 14sp）；点击挂在 48 的盒子上。
+ *
+ * 48 是本轮团队统一下限，**不是框架自动撑出来的**：纯 [clickable] 不做
+ * minimumInteractiveComponentSize，写 44 就是 44，不会有任何机制兜住回归，所以要显式写死。
+ */
 @Composable
 private fun MonthNavButton(forward: Boolean, onClick: () -> Unit) {
     Box(

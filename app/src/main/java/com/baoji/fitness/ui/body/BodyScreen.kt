@@ -569,11 +569,23 @@ private fun SparkCard(spec: SparkSpec, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.Bottom
         ) {
             Text(
-                text = "${spec.title} ${spec.points.size} 次",
+                text = spec.title,
                 fontSize = 11.sp,
                 color = AppleTextSecondary
             )
+            // 区间而不是单值：首尾各出现一次，图上就不再写字，卡片里没有重复数字
             Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    text = formatMetric(first.value),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = AppleTextSecondary
+                )
+                Text(
+                    text = " → ",
+                    fontSize = 11.sp,
+                    color = AppleTextSecondary
+                )
                 Text(
                     text = formatMetric(last.value),
                     fontSize = 13.sp,
@@ -627,12 +639,11 @@ private fun SparkCard(spec: SparkSpec, modifier: Modifier = Modifier) {
 @Composable
 private fun SparkChart(spec: SparkSpec, modifier: Modifier = Modifier) {
     val values = spec.points.map { it.value }
-    val firstValue = spec.points.first().value
 
     Canvas(modifier = modifier) {
-        val labelReserve = 15.dp.toPx()
+        val inset = 4.dp.toPx()
         val w = size.width
-        val h = size.height - labelReserve
+        val h = size.height - inset * 2
         val lo = values.minOrNull() ?: 0.0
         val hi = values.maxOrNull() ?: 1.0
         val span = (hi - lo).takeIf { it > 0.0 } ?: 1.0
@@ -641,7 +652,7 @@ private fun SparkChart(spec: SparkSpec, modifier: Modifier = Modifier) {
             if (values.size > 1) index * (w / (values.size - 1)) else w / 2f
 
         fun yOf(value: Double): Float =
-            labelReserve + (h - ((value - lo) / span) * h).toFloat()
+            inset + (h - ((value - lo) / span) * h).toFloat()
 
         val linePath = Path()
         values.forEachIndexed { i, v ->
@@ -653,8 +664,8 @@ private fun SparkChart(spec: SparkSpec, modifier: Modifier = Modifier) {
         // 折线下方的浅绿渐变：只是让「更低 = 更好」读得更快，不承担读数
         val fillPath = Path().apply {
             addPath(linePath)
-            lineTo(xOf(values.size - 1), labelReserve + h)
-            lineTo(xOf(0), labelReserve + h)
+            lineTo(xOf(values.size - 1), inset + h)
+            lineTo(xOf(0), inset + h)
             close()
         }
         drawPath(
@@ -664,8 +675,8 @@ private fun SparkChart(spec: SparkSpec, modifier: Modifier = Modifier) {
                     AppleFitnessGreen.copy(alpha = 0.26f),
                     AppleFitnessGreen.copy(alpha = 0f)
                 ),
-                startY = labelReserve,
-                endY = labelReserve + h
+                startY = inset,
+                endY = inset + h
             )
         )
 
@@ -679,27 +690,12 @@ private fun SparkChart(spec: SparkSpec, modifier: Modifier = Modifier) {
         drawCircle(
             color = AppleTextSecondary,
             radius = 3.dp.toPx(),
-            center = Offset(xOf(0), yOf(firstValue))
+            center = Offset(xOf(0), yOf(values.first()))
         )
         drawCircle(
             color = AppleFitnessGreen,
             radius = 3.dp.toPx(),
             center = Offset(xOf(values.size - 1), yOf(values.last()))
-        )
-
-        // 起点数值：11sp 等宽贴在端点上方；末值在卡片标题里，不重复画
-        val paint = android.graphics.Paint().apply {
-            textSize = 11.sp.toPx()
-            typeface = android.graphics.Typeface.MONOSPACE
-            isAntiAlias = true
-        }
-        paint.color = 0xFF8E8E93.toInt()
-        paint.textAlign = android.graphics.Paint.Align.LEFT
-        drawContext.canvas.nativeCanvas.drawText(
-            formatMetric(firstValue),
-            0f,
-            (yOf(firstValue) - 5.dp.toPx()).coerceAtLeast(paint.textSize),
-            paint
         )
     }
 }
