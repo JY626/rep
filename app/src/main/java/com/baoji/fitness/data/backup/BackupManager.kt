@@ -16,6 +16,17 @@ import org.json.JSONObject
 import java.io.File
 import java.time.LocalDate
 
+/** 备份文件标识与格式版本；恢复时据此拒收其它 App 或未来版本的文件。 */
+private const val BACKUP_APP = "Rep"
+private const val BACKUP_VERSION = 1
+
+/** 自动快照后缀（覆盖导入前兜底），与用户主动导出分开保留、分开计数。 */
+private const val PRE_RESTORE_SUFFIX = "-pre-restore"
+
+/** 缓存目录里最多留几份用户导出、几份自动快照；更旧的在下次落盘时清掉。 */
+private const val EXPORT_FILES_KEPT = 3
+private const val SNAPSHOT_FILES_KEPT = 2
+
 /** 恢复模式：合并导入（去重）或覆盖导入 */
 enum class RestoreMode {
     MERGE,
@@ -38,7 +49,11 @@ data class RestoreResult(
     val restoredSessions: Int,
     val restoredSets: Int,
     val restoredBodyMetrics: Int,
-    val restoredExercises: Int
+    val restoredExercises: Int,
+    /** 合并导入时按「会话 + 动作 + 组序」判定为已存在、因此跳过写入的组数。 */
+    val skippedDuplicateSets: Int = 0,
+    /** 覆盖导入前自动落盘的当前数据快照路径（无旧数据时为 null）。 */
+    val preRestoreBackupPath: String? = null
 )
 
 class BackupManager(
@@ -54,7 +69,45 @@ class BackupManager(
      * 保存于 cacheDir/backups/rep-backup-YYYY-MM-DD.json
      */
     suspend fun exportBackup(): Result<File> = withContext(Dispatchers.IO) {
-        runCatching {
+        runCatching { writeBackupFile() }
+    }
+
+    /**
+     * 落盘一份全量快照。
+     * [suffix] 用于区分「用户主动导出」与「覆盖导入前的自动兜底」，两者字段完全一致。
+     */
+    private suspend fun writeBackupFile(suffix: String? = null): File {
+        val root = buildBackupJson()
+        val dir = File(context.cacheDir, "backups").apply { if (!exists()) mkdirs() }
+        val name = "rep-backup-${LocalDate.now()}${suffix ?: ""}.json"
+        val file = File(dir, name).apply { writeText(root.toString(2), Charsets.UTF_8) }
+        pruneOldBackups(dir, keepExports = EXPORT_FILES_KEPT, keepSnapshots = SNAPSHOT_FILES_KEPT)
+        return file
+    }
+
+    /**
+     * 清理历史备份文件。
+     *
+     * 这些 JSON 含体重、体脂等身体数据，长期堆在 cache 里既占空间也是隐私尾巴；
+     * 但只删「较旧的」，刚写出的那份永远保留，避免 Sharesheet 还在读 Uri 时文件被删。
+     * 自动快照与用户导出分开计数，避免一次批量恢复把用户手动导出的文件挤掉。
+     */
+    private fun pruneOldBackups(dir: File, keepExports: Int, keepSnapshots: Int) {
+        val files = dir.listFiles { f -> f.isFile && f.name.startsWith("rep-backup-") && f.name.endsWith(".json") }
+            ?: return
+        val (snapshots, exports) = files.partition { it.name.contains(PRE_RESTORE_SUFFIX) }
+        fun trim(group: List<File>, keep: Int) {
+            group.sortedByDescending { it.lastModified() }.drop(keep).forEach { it.delete() }
+        }
+        trim(exports, keepExports)
+        trim(snapshots, keepSnapshots)
+    }
+
+    /**
+     * 全量序列化当前库。导出与「覆盖导入前自动备份」共用这一份实现，
+     * 避免两处字段清单漂移导致备份悄悄缺列。
+     */
+    private suspend fun buildBackupJson(): JSONObject {
             val sessions = workoutDao.getAllSessionsList()
             val sets = workoutDao.getAllSetsList()
             val exercises = exerciseDao.getAllExercisesList()
@@ -63,8 +116,8 @@ class BackupManager(
             val exerciseMap = exercises.associateBy { it.id }
 
             val root = JSONObject().apply {
-                put("app", "Rep")
-                put("version", 1)
+                put("app", BACKUP_APP)
+                put("version", BACKUP_VERSION)
                 put("exportedAt", System.currentTimeMillis())
                 put("exportDate", LocalDate.now().toString())
 
@@ -137,12 +190,7 @@ class BackupManager(
                 put("bodyMetrics", bodyMetricsArray)
             }
 
-            val backupDir = File(context.cacheDir, "backups").apply { if (!exists()) mkdirs() }
-            val fileName = "rep-backup-${LocalDate.now()}.json"
-            val backupFile = File(backupDir, fileName)
-            backupFile.writeText(root.toString(2), Charsets.UTF_8)
-            backupFile
-        }
+            return root
     }
 
     /**
@@ -171,7 +219,8 @@ class BackupManager(
      */
     fun parseSummary(jsonString: String): Result<BackupSummary> = runCatching {
         val root = JSONObject(jsonString)
-        val app = root.optString("app", "Rep")
+        validateBackup(root)
+        val app = root.optString("app", "")
         val version = root.optInt("version", 1)
         val exportedAt = root.optLong("exportedAt", System.currentTimeMillis())
 
@@ -192,11 +241,30 @@ class BackupManager(
     }
 
     /**
+     * 拒收非 Rep 备份与未来版本的备份文件。
+     * 此前完全不校验，任意 JSON 都能走到「恢复成功 0 条」或被静默部分导入。
+     */
+    private fun validateBackup(root: JSONObject) {
+        val app = root.optString("app", "")
+        require(app == BACKUP_APP) { "不是 Rep 的备份文件（app=$app）" }
+        val version = root.optInt("version", 0)
+        require(version in 1..BACKUP_VERSION) { "备份版本 $version 不受支持（当前支持 1..$BACKUP_VERSION）" }
+    }
+
+    /**
      * 从 JSON 文本恢复数据
      */
     suspend fun restore(jsonString: String, mode: RestoreMode): Result<RestoreResult> = withContext(Dispatchers.IO) {
         runCatching {
             val root = JSONObject(jsonString)
+            validateBackup(root)
+
+            // 覆盖导入是不可逆操作：删库前先无条件落一份当前快照（空库则跳过）。
+            val preRestore = if (mode == RestoreMode.OVERWRITE && workoutDao.getAllSessionsList().isNotEmpty()) {
+                writeBackupFile(PRE_RESTORE_SUFFIX)
+            } else {
+                null
+            }
 
             database.withTransaction {
                 if (mode == RestoreMode.OVERWRITE) {
@@ -204,6 +272,13 @@ class BackupManager(
                     workoutDao.deleteAllSessions()
                     bodyMetricDao.deleteAll()
                 }
+
+                // 合并导入的判重基准：会话 + 动作 + 组序 视为同一组。
+                // 会话按 startTime+title 能对上，但组此前是无条件全量插入 —— 同一份备份导入两次，
+                // 容量直接翻倍、PR 虚高、部位周组数冲过 MRV 误报过度训练。
+                val existingSetKeys = workoutDao.getAllSetsList()
+                    .mapTo(mutableSetOf()) { Triple(it.sessionId, it.exerciseId, it.setOrder) }
+                var skippedDuplicateSets = 0
 
                 // 1. 恢复与映射动作库 (Exercise)
                 val localExercises = exerciseDao.getAllExercisesList().associateBy { it.name }.toMutableMap()
@@ -304,6 +379,13 @@ class BackupManager(
                         ?: continue
 
                     val setOrder = obj.optInt("setOrder", 1)
+
+                    // 已存在同一组（会话 + 动作 + 组序）就跳过，重复导入不会把容量翻倍。
+                    if (!existingSetKeys.add(Triple(mappedSessionId, mappedExerciseId, setOrder))) {
+                        skippedDuplicateSets++
+                        continue
+                    }
+
                     val setType = obj.optString("setType", "NORMAL")
                     val weightKg = obj.optDouble("weightKg", 0.0)
                     val reps = obj.optInt("reps", 0)
@@ -397,7 +479,9 @@ class BackupManager(
                     restoredSessions = restoredSessionsCount,
                     restoredSets = restoredSetsCount,
                     restoredBodyMetrics = restoredBodyMetricsCount,
-                    restoredExercises = restoredExercisesCount
+                    restoredExercises = restoredExercisesCount,
+                    skippedDuplicateSets = skippedDuplicateSets,
+                    preRestoreBackupPath = preRestore?.absolutePath
                 )
             }
         }

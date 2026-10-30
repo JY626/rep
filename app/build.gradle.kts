@@ -1,9 +1,31 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+/**
+ * 发布签名：仓库根目录存在 `keystore.properties`（不进 git）时才启用 release 签名，
+ * 否则回退 debug 签名，保证 clone 下来就能编、能装。
+ *
+ * keystore.properties 内容：
+ *   storeFile=rep-release.jks
+ *   storePassword=***
+ *   keyAlias=rep
+ *   keyPassword=***
+ *
+ * 注意：debug 签名只能自用。一旦对外分发，后续版本换了签名就无法覆盖安装，
+ * 用户只能卸载重装（数据会丢，除非先导出 JSON 备份）。
+ */
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val releaseStoreFile = keystoreProps.getProperty("storeFile")?.let { rootProject.file(it) }
+val hasReleaseKeystore = releaseStoreFile?.exists() == true
 
 android {
     namespace = "com.baoji.fitness"
@@ -19,10 +41,28 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // 暂不开 R8：Health Connect 记录类与 Room 生成代码需要真机跑通才能确认规则够用，
+            // 未验证就开混淆等于赌运行时崩溃。要开请先补 keep 规则并跑一遍 connectedAndroidTest。
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                // 没有 keystore 时的兜底：仅适合本机自用安装
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

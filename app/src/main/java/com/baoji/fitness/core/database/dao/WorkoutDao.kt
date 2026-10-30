@@ -101,4 +101,24 @@ interface WorkoutDao {
 
     @Query("DELETE FROM workout_sets")
     suspend fun deleteAllSets()
+
+    // ---- 历史纠正：误记的整场训练必须能删掉 ----
+
+    /** 删除指定会话；`workout_sets` 由外键 CASCADE 一并清除。 */
+    @Query("DELETE FROM workout_sessions WHERE id IN (:sessionIds)")
+    suspend fun deleteSessionsByIds(sessionIds: List<Long>)
+
+    /** 删除前取受影响动作，用于删后重算 PR。 */
+    @Query("SELECT * FROM workout_sets WHERE sessionId IN (:sessionIds)")
+    suspend fun getSetsForSessions(sessionIds: List<Long>): List<WorkoutSetEntity>
+
+    /**
+     * 剩余数据里的「最佳正式组」——PR 重算的唯一依据。
+     * 口径与 PersonalRecordCalculator 一致：完成 且 非热身，先比重、再比次数。
+     */
+    @Query(
+        "SELECT * FROM workout_sets WHERE exerciseId = :exerciseId AND isCompleted = 1 " +
+            "AND setType != 'WARMUP' ORDER BY weightKg DESC, reps DESC LIMIT 1"
+    )
+    suspend fun getBestCompletedSet(exerciseId: Long): WorkoutSetEntity?
 }

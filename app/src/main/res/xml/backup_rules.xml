@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
+    <!-- 训练与身体数据主库 -->
     <include domain="database" path="baoji_database" />
+    <!-- 提醒与偏好（训练日、提醒时间、组间休息）——此前未纳入，换机后设置会静默丢失 -->
+    <include domain="sharedpref" path="baoji_reminder_settings.xml" />
 </full-backup-content>

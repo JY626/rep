@@ -1,5 +1,7 @@
 package com.baoji.fitness.data.repository
 
+import androidx.room.withTransaction
+import com.baoji.fitness.core.database.BaojiDatabase
 import com.baoji.fitness.core.database.dao.ExerciseDao
 import com.baoji.fitness.core.database.dao.WorkoutDao
 import com.baoji.fitness.core.database.entity.BodyMetricEntity
@@ -33,7 +35,9 @@ import java.time.ZoneId
 class WorkoutRepository(
     private val workoutDao: WorkoutDao,
     private val exerciseDao: ExerciseDao,
-    private val onSessionArchived: (suspend (WorkoutSessionEntity, List<WorkoutSetEntity>, List<ExerciseEntity>) -> Unit)? = null
+    private val onSessionArchived: (suspend (WorkoutSessionEntity, List<WorkoutSetEntity>, List<ExerciseEntity>) -> Unit)? = null,
+    /** 供跨表写操作开事务（删除历史 + PR 重算必须原子，否则会出现「组没了 PR 还在」）。 */
+    private val database: BaojiDatabase? = null
 ) {
     fun getActiveSession(): Flow<WorkoutSessionEntity?> = workoutDao.getActiveSession()
 
@@ -67,6 +71,38 @@ class WorkoutRepository(
                 }
             }
         }
+
+    /**
+     * 删除某个自然日的全部训练记录（含组），并把受影响动作的 PR 重算回剩余数据。
+     *
+     * 存在的理由：此前全项目没有任何删除入口，把 60kg 误记成 600kg 之后，PR、容量曲线、
+     * 周部位组数会被永久污染，且没有任何办法修回来。
+     *
+     * 归期口径与日历 / 周期回顾一致：按会话 `startTime` 的本地日期归属，不使用 SQLite 日期函数。
+     * PR 重算必须与删除同事务，否则中途失败会留下「组已删、PR 仍是旧峰值」的说谎数据。
+     *
+     * @return 实际删除的会话数（当天没有训练则为 0）
+     */
+    suspend fun deleteWorkoutDay(day: LocalDate): Int = inTransaction {
+        val sessions = workoutDao.getAllSessionsList().filter { it.startTime.toLocalDate() == day }
+        if (sessions.isEmpty()) return@inTransaction 0
+
+        val ids = sessions.map { it.id }
+        // 先取受影响动作，删完就查不到这些组了
+        val affectedExerciseIds = workoutDao.getSetsForSessions(ids).map { it.exerciseId }.distinct()
+
+        workoutDao.deleteSessionsByIds(ids)
+
+        affectedExerciseIds.forEach { exerciseId ->
+            val best = workoutDao.getBestCompletedSet(exerciseId)
+            exerciseDao.updatePR(exerciseId, best?.weightKg ?: 0.0, best?.reps ?: 0)
+        }
+        sessions.size
+    }
+
+    /** 有 database 时才开事务；单元测试里可以只注入两个 DAO。 */
+    private suspend fun <T> inTransaction(block: suspend () -> T): T =
+        database?.withTransaction { block() } ?: block()
 
     private fun Long.toLocalDate(): LocalDate =
         Instant.ofEpochMilli(this).atZone(ZoneId.systemDefault()).toLocalDate()

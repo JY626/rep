@@ -169,6 +169,14 @@ class CalendarViewModel(
         }
     }
 
+    // ---- 历史纠正：删掉误记的一整天训练 ----
+
+    fun deleteWorkoutDay(day: LocalDate, onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            onResult(repository.deleteWorkoutDay(day))
+        }
+    }
+
     // ---- P1 Health Connect 闭环读取与同步 ----
 
     fun syncFromHealthConnect(context: Context, onResult: (Result<Int>) -> Unit) {

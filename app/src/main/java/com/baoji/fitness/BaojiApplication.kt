@@ -23,10 +23,14 @@ class BaojiApplication : Application() {
         WorkoutRepository(
             workoutDao = database.workoutDao(),
             exerciseDao = database.exerciseDao(),
+            database = database,
             onSessionArchived = { session, sets, exercises ->
                 if (reminderSettings.config.value.healthConnectEnabled) {
                     applicationScope.launch {
                         HealthConnectWriter.writeWorkout(this@BaojiApplication, session, sets, exercises)
+                            .onFailure { e ->
+                                android.util.Log.e("BaojiApp", "训练归档写入 Health Connect 失败: ${e.message}", e)
+                            }
                     }
                 }
             }
@@ -41,6 +45,9 @@ class BaojiApplication : Application() {
                 if (reminderSettings.config.value.healthConnectEnabled) {
                     applicationScope.launch {
                         HealthConnectWriter.writeBodyMetrics(this@BaojiApplication, metric)
+                            .onFailure { e ->
+                                android.util.Log.e("BaojiApp", "身体数据写入 Health Connect 失败: ${e.message}", e)
+                            }
                     }
                 }
             }

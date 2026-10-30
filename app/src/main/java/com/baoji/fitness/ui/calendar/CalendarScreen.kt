@@ -112,6 +112,8 @@ fun CalendarScreen(
 
     var showDayMetricSheet by remember { mutableStateOf(false) }
 
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     var pendingBackupSummary by remember { mutableStateOf<BackupSummary?>(null) }
     var pendingBackupJson by remember { mutableStateOf<String?>(null) }
 
@@ -264,7 +266,56 @@ fun CalendarScreen(
                     }
                 }
             },
-            onDismiss = { viewModel.selectDay(null) }
+            onDismiss = { viewModel.selectDay(null) },
+            onDelete = { showDeleteConfirm = true }
+        )
+    }
+
+    // 历史纠正：删掉误记的一整天（不可撤销，必须二次确认）
+    if (showDeleteConfirm && selectedDay != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            containerColor = AppleGray6,
+            title = {
+                Text(
+                    text = "删除这天的训练记录？",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppleTextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "将删除 ${selectedDay!!.format(DateTimeFormatter.ofPattern("M月d日"))} 的全部组记录，" +
+                        "并按剩余数据重算受影响动作的 PR。此操作不可撤销。",
+                    fontSize = 13.sp,
+                    color = AppleTextSecondary,
+                    lineHeight = 19.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val day = selectedDay!!
+                        showDeleteConfirm = false
+                        viewModel.deleteWorkoutDay(day) { removed ->
+                            Toast.makeText(
+                                context,
+                                if (removed > 0) "已删除 $removed 次训练，PR 已重算" else "这天没有可删除的记录",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            viewModel.selectDay(null)
+                        }
+                    }
+                ) {
+                    Text("删除", color = Color(0xFFFF453A), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消", color = AppleTextSecondary)
+                }
+            }
         )
     }
 
@@ -299,9 +350,13 @@ fun CalendarScreen(
             onConfirm = { mode ->
                 viewModel.restoreBackup(pendingBackupJson!!, mode) { result ->
                     result.onSuccess { res ->
+                        val skipped = if (res.skippedDuplicateSets > 0) {
+                            "，跳过 ${res.skippedDuplicateSets} 组已存在数据"
+                        } else ""
+                        val snapshot = if (res.preRestoreBackupPath != null) "（原数据已自动备份）" else ""
                         Toast.makeText(
                             context,
-                            "恢复成功！已导入 ${res.restoredSessions} 次训练、${res.restoredBodyMetrics} 条身体数据",
+                            "恢复成功！已导入 ${res.restoredSessions} 次训练、${res.restoredBodyMetrics} 条身体数据$skipped$snapshot",
                             Toast.LENGTH_LONG
                         ).show()
                     }.onFailure { err ->
@@ -700,7 +755,8 @@ private fun DayDetailSheet(
     metric: BodyMetricEntity?,
     onRecordMetric: () -> Unit,
     onShareToAi: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val dateFormat = remember { DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINESE) }
 
@@ -865,6 +921,20 @@ private fun DayDetailSheet(
                     fontFamily = FontFamily.Monospace,
                     color = if (metric == null) AppleTextTertiary else AppleTextPrimary
                 )
+            }
+
+            // 历史纠正入口：误记（如 60kg 打成 600kg）此前完全无法修正，会永久污染 PR 与容量曲线
+            if (detail != null) {
+                TextButton(
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "删除这天的训练记录",
+                        fontSize = 12.sp,
+                        color = Color(0xFFFF453A)
+                    )
+                }
             }
         }
     }

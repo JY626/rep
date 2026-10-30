@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
+        <!-- 训练与身体数据主库 -->
         <include domain="database" path="baoji_database" />
+        <!-- 提醒与偏好（训练日、提醒时间、组间休息） -->
+        <include domain="sharedpref" path="baoji_reminder_settings.xml" />
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="baoji_database" />
+        <include domain="sharedpref" path="baoji_reminder_settings.xml" />
     </device-transfer>
 </data-extraction-rules>
